@@ -4,29 +4,49 @@
 #include<sys/socket.h>
 #include<netdb.h>
 
-
-t_log *log = log_create("cpu.log", "cpu", true, LOG_LEVEL_INFO);
-t_config* config = iniciar_config("cpu");
-
-int main(int argc, char* argv[]) 
+struct PCB
 {
-    //inicia conexion con Kernel dispatch
-    int conexion_kernel_dispatch = recibir_conexion("8001");
-    //Inicia conexion con la memoria
-    int conexion_memoria = recibir_conexion("8002");
-    //inicia conexion con Kernel interrput
-    int conexion_kernel_interrput recibir_conexion("8003");
+    int PID;
+    int PC;
+    
+};
 
+t_config* iniciar_config()
+{
+	t_config* nuevo_config = config_create("kernel.conf");
+	return nuevo_config;
 }
 
-int recibir_procesos(int conexion)
-{
-    //IMplementar escucha del CPU para recibir los PID y el PC --> una vez los reciba
+t_log *log_kernel = NULL;
+
+int main(int argc, char* argv[]) {
+    //saludar("kernel");
+
+    t_config* config_kernel = iniciar_config("kernel");
+
+    log_kernel = log_create("kernel.log", "kernel", true, LOG_LEVEL_INFO);
+    /*
+    char *nombreArchivo = NULL;
+    char *tamanioProceso = NULL;
+
+    if (argc < 3)
+    {
+        log_info(log_kernel, "Error, Parametros INvalidos");
+        return 1;
+    }
+    nombreArchivo = argv[1];
+    tamanioProceso = argv[2];
+
+    log_info(log_kernel, "Archivo: %s, tamanio: %s",nombreArchivo, tamanioProceso);
+    */
+    char* puerto_escucha_dispatch = config_get_string_value(config_kernel, "PUERTO_ESCUCHA_DISPATCH");
+    int socket_dispatch = iniciar_modulo(puerto_escucha_dispatch);
+
+
+    int cpu_conectada = establecer_conexion(socket_dispatch);
+    
+    log_info(log_kernel, "Funco quizas?");
 
     return 0;
 }
 
-int procesamiento(int pid, int pc, int conexion_memoria)
-{
-    //procesamiento en proceso
-}
