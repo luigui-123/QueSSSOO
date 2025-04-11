@@ -4,17 +4,12 @@
 #include<sys/socket.h>
 #include<netdb.h>
 
-void saludar(char* quien) {
+void saludar(char* quien) 
+{
     printf("Hola desde %s!!\n", quien);
 }
 
-t_config* iniciar_config(char* test)
-{
-	t_config* nuevo_config = config_create(string_from_vformat("%s.conf", test));
-	return nuevo_config;
-}
-
-int recibir_conexion(char* puerto)
+int iniciar_modulo(char* puerto)
 {
 	// Quitar esta línea cuando hayamos terminado de implementar la funcion
 
@@ -55,7 +50,7 @@ int recibir_conexion(char* puerto)
 }
 
 
-int iniciar_conexion(int ip, int puerto)
+int iniciar_conexion(char* ip, char* puerto)
 {
 	struct addrinfo hints;
 	struct addrinfo *modulo_2;
@@ -75,8 +70,20 @@ int iniciar_conexion(int ip, int puerto)
 	
 	connect(socket_a_crear, modulo_2->ai_addr, modulo_2->ai_addrlen);
 
-
 	freeaddrinfo(modulo_2);
 
 	return socket_a_crear;
+}
+
+
+int establecer_conexion(int socket_servidor)
+{
+	// Quitar esta línea cuando hayamos terminado de implementar la funcion
+
+	// Aceptamos un nuevo cliente
+	int socket_cliente = accept(socket_servidor, NULL, NULL);
+	if (socket_cliente == -1) {
+	}
+	printf("Se Conecto algo");
+	return socket_cliente;
 }
