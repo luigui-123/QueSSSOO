@@ -12,10 +12,10 @@
 */
 void saludar(char* quien);
 
-int recibir_conexion(char* puerto);
+int iniciar_modulo(char* puerto);
 
-t_config* iniciar_config(char* cofig);
+int iniciar_conexion(char* ip, char* puerto);
 
-int iniciar_conexion(int ip, int puerto);
+int establecer_conexion(int socket_servidor);
 
 #endif
