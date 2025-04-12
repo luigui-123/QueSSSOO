@@ -17,7 +17,16 @@ t_config* iniciar_config()
 	return nuevo_config;
 }
 
+
 t_log *log_kernel = NULL;
+
+void recibir_mensaje(int socket_cliente)
+{
+	int size;
+	char* buffer = recibir_buffer(&size, socket_cliente);
+	log_info(log_kernel, "Me llego el mensaje %s", buffer);
+	free(buffer);
+}
 
 int main(int argc, char* argv[]) {
     //saludar("kernel");
@@ -55,4 +64,3 @@ int main(int argc, char* argv[]) {
 
     return 0;
 }
-
