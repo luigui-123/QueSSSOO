@@ -41,11 +41,17 @@ int main(int argc, char* argv[]) {
     */
     char* puerto_escucha_dispatch = config_get_string_value(config_kernel, "PUERTO_ESCUCHA_DISPATCH");
     int socket_dispatch = iniciar_modulo(puerto_escucha_dispatch);
-
-
-    int cpu_conectada = establecer_conexion(socket_dispatch);
     
+    int cpu_conectada = establecer_conexion(socket_dispatch);
+
+    
+
+    if (cpu_conectada == -1)
+    {
+            log_info(log_kernel, "No Funco quizas?");
+    }
     log_info(log_kernel, "Funco quizas?");
+
 
     return 0;
 }

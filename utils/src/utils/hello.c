@@ -3,10 +3,26 @@
 #include <commons/log.h>
 #include<sys/socket.h>
 #include<netdb.h>
+#include <commons/bitarray.h>
 
 void saludar(char* quien) 
 {
     printf("Hola desde %s!!\n", quien);
+}
+
+void* serializar_paquete(t_paquete* paquete, int bytes)
+{
+	void * magic = malloc(bytes);
+	int desplazamiento = 0;
+
+	memcpy(magic + desplazamiento, &(paquete->codigo_operacion), sizeof(int));
+	desplazamiento+= sizeof(int);
+	memcpy(magic + desplazamiento, &(paquete->buffer->size), sizeof(int));
+	desplazamiento+= sizeof(int);
+	memcpy(magic + desplazamiento, paquete->buffer->stream, paquete->buffer->size);
+	desplazamiento+= paquete->buffer->size;
+
+	return magic;
 }
 
 int iniciar_modulo(char* puerto)
@@ -76,14 +92,34 @@ int iniciar_conexion(char* ip, char* puerto)
 }
 
 
-int establecer_conexion(int socket_servidor)
+int establecer_conexion(int socket_escucha)
 {
 	// Quitar esta línea cuando hayamos terminado de implementar la funcion
 
 	// Aceptamos un nuevo cliente
-	int socket_cliente = accept(socket_servidor, NULL, NULL);
-	if (socket_cliente == -1) {
+	int socket_conectado = accept(socket_escucha, NULL, NULL);
+	if (socket_conectado == -1) {
+		return -1;
 	}
-	printf("Se Conecto algo");
-	return socket_cliente;
+	return socket_conectado;
+}
+
+void enviar_mensaje(char* mensaje, int socket_cliente)
+{
+	t_paquete* paquete = malloc(sizeof(t_paquete));
+
+	paquete->codigo_operacion = MENSAJE;
+	paquete->buffer = malloc(sizeof(t_buffer));
+	paquete->buffer->size = strlen(mensaje) + 1;
+	paquete->buffer->stream = malloc(paquete->buffer->size);
+	memcpy(paquete->buffer->stream, mensaje, paquete->buffer->size);
+
+	int bytes = paquete->buffer->size + 2*sizeof(int);
+
+	void* a_enviar = serializar_paquete(paquete, bytes);
+
+	send(socket_cliente, a_enviar, bytes, 0);
+
+	free(a_enviar);
+	eliminar_paquete(paquete);
 }
