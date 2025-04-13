@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <commons/config.h>
+#include <commons/log.h>
 /**
 * @brief Imprime un saludo por consola
 * @param quien Módulo desde donde se llama a la función
@@ -27,16 +28,19 @@ typedef struct
 	t_buffer* buffer;
 } t_paquete;
 
-
 void saludar(char* quien);
 
-int iniciar_modulo(char* puerto);
+int iniciar_modulo(char* puerto, t_log* log_modulo);
 
-int iniciar_conexion(char* ip, char* puerto);
+int iniciar_conexion(char* ip, char* puerto,t_log* log_modulo);
 
-int establecer_conexion(int socket_servidor);
+int establecer_conexion(int socket_servidor,t_log* log_modulo);
 
 void enviar_mensaje(char* mensaje, int socket_cliente);
+
+void enviar_mensaje(char* mensaje, int socket_cliente);
+
+void recibir_mensaje(int socket_cliente,t_log * log_modulo);
 
 
 #endif

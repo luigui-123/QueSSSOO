@@ -1,8 +1,9 @@
 #include <utils/hello.h>
 #include <commons/log.h>
 #include <commons/config.h>
-#include<sys/socket.h>
-#include<netdb.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <unistd.h>
 
 
 t_log *log_cpu = NULL;
@@ -17,19 +18,29 @@ t_config* iniciar_config()
 
 int main(int argc, char* argv[]) 
 {
-    log_cpu = log_create("cpu.log", "cpu", true, LOG_LEVEL_INFO);
-    cpu_conf = iniciar_config();  
+    log_cpu = log_create("cpu.log", "cpu", false, LOG_LEVEL_INFO);
+    cpu_conf = iniciar_config(); 
+
     //inicia conexion con Kernel dispatch
     char* ip_kernel_dispatch = config_get_string_value(cpu_conf, "IP_KERNEL");
-    char* puerto_kernel_disptach = config_get_string_value(cpu_conf, "PUERTO_KERNEL_DISPATCH");
-    int conexion_kernel_dispatch = iniciar_conexion(ip_kernel_dispatch, puerto_kernel_disptach);
+    char* puerto_kernel_dispatch = config_get_string_value(cpu_conf, "PUERTO_KERNEL_DISPATCH");
+    int conexion_kernel_dispatch = iniciar_conexion(ip_kernel_dispatch, puerto_kernel_dispatch,log_cpu);
 
-    log_info(log_cpu, "conexion creada?");
+
+
+    enviar_mensaje('testeo',conexion_kernel_dispatch);
+    recibir_mensaje(conexion_kernel_dispatch,log_cpu);
+
     //Inicia conexion con la memoria
     //int conexion_memoria = iniciar_conexion("8002");
     //inicia conexion con Kernel interrput
     //int conexion_kernel_interrput = iniciar_conexion("8003");
 
+    close(conexion_kernel_dispatch);
+    log_destroy(log_cpu);
+    config_destroy(cpu_conf);
+
+    return 0;
 }
 
 int recibir_procesos(int conexion)
@@ -42,4 +53,5 @@ int recibir_procesos(int conexion)
 int procesamiento(int pid, int pc, int conexion_memoria)
 {
     //procesamiento en proceso
+    return 0;
 }

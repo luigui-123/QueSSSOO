@@ -1,9 +1,10 @@
 #include <utils/hello.h>
 #include <commons/config.h>
 #include <commons/log.h>
-#include<sys/socket.h>
-#include<netdb.h>
+#include <sys/socket.h>
+#include <netdb.h>
 #include <commons/bitarray.h>
+#include <string.h>
 
 void saludar(char* quien) 
 {
@@ -25,7 +26,8 @@ void* serializar_paquete(t_paquete* paquete, int bytes)
 	return magic;
 }
 
-int iniciar_modulo(char* puerto)
+// Iniciar server y esperar conexion
+int iniciar_modulo(char* puerto, t_log* log_modulo)
 {
 	// Quitar esta línea cuando hayamos terminado de implementar la funcion
 
@@ -58,15 +60,20 @@ int iniciar_modulo(char* puerto)
 	if (err == -1)
 		printf("Error en la cpu, bind");
 
+
+	log_info(log_modulo, "Se espera conexion");
+
 	// Escuchamos las conexiones entrantes
 	err = listen(socket_cpu, SOMAXCONN);
+
+	log_info(log_modulo, "Listo para escuchar");
 
 	freeaddrinfo(servinfo);
 	return socket_cpu;
 }
 
-
-int iniciar_conexion(char* ip, char* puerto)
+// Iniciar cliente
+int iniciar_conexion(char* ip, char* puerto,t_log* log_modulo)
 {
 	struct addrinfo hints;
 	struct addrinfo *modulo_2;
@@ -86,13 +93,14 @@ int iniciar_conexion(char* ip, char* puerto)
 	
 	connect(socket_a_crear, modulo_2->ai_addr, modulo_2->ai_addrlen);
 
+	log_info(log_modulo, "Se conecto exitosamente");
 	freeaddrinfo(modulo_2);
 
 	return socket_a_crear;
 }
 
-
-int establecer_conexion(int socket_escucha)
+// Servidor acepta cliente
+int establecer_conexion(int socket_escucha, t_log* log_modulo)
 {
 	// Quitar esta línea cuando hayamos terminado de implementar la funcion
 
@@ -101,6 +109,7 @@ int establecer_conexion(int socket_escucha)
 	if (socket_conectado == -1) {
 		return -1;
 	}
+	log_info(log_modulo, "Se conecto exitosamente");
 	return socket_conectado;
 }
 
@@ -130,3 +139,23 @@ void enviar_mensaje(char* mensaje, int socket_cliente)
 	free(a_enviar);
 	eliminar_paquete(paquete);
 }
+
+void* recibir_buffer(int* size, int socket_cliente)
+{
+	void * buffer;
+
+	recv(socket_cliente, size, sizeof(int), MSG_WAITALL);
+	buffer = malloc(*size);
+	recv(socket_cliente, buffer, *size, MSG_WAITALL);
+
+	return buffer;
+}
+
+void recibir_mensaje(int socket_cliente,t_log * log_modulo)
+{
+ 	int size;
+ 	char* buffer = recibir_buffer(&size, socket_cliente);
+ 	log_info(log_modulo, "Me llego el mensaje %s", buffer);
+ 	free(buffer);
+}
+

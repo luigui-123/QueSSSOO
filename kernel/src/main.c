@@ -1,14 +1,15 @@
 #include <utils/hello.h>
 #include <commons/log.h>
 #include <commons/config.h>
-#include<sys/socket.h>
-#include<netdb.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <unistd.h>
 
 struct PCB
 {
     int PID;
     int PC;
-    
+    int MT [7];
 };
 
 t_config* iniciar_config()
@@ -17,50 +18,31 @@ t_config* iniciar_config()
 	return nuevo_config;
 }
 
-
 t_log *log_kernel = NULL;
 
-void recibir_mensaje(int socket_cliente)
-{
-	int size;
-	char* buffer = recibir_buffer(&size, socket_cliente);
-	log_info(log_kernel, "Me llego el mensaje %s", buffer);
-	free(buffer);
-}
-
 int main(int argc, char* argv[]) {
-    //saludar("kernel");
 
     t_config* config_kernel = iniciar_config("kernel");
 
-    log_kernel = log_create("kernel.log", "kernel", true, LOG_LEVEL_INFO);
-    /*
-    char *nombreArchivo = NULL;
-    char *tamanioProceso = NULL;
+    log_kernel = log_create("kernel.log", "kernel", false, LOG_LEVEL_INFO);
 
-    if (argc < 3)
-    {
-        log_info(log_kernel, "Error, Parametros INvalidos");
-        return 1;
-    }
-    nombreArchivo = argv[1];
-    tamanioProceso = argv[2];
-
-    log_info(log_kernel, "Archivo: %s, tamanio: %s",nombreArchivo, tamanioProceso);
-    */
+    // Crea socket de dispatch
     char* puerto_escucha_dispatch = config_get_string_value(config_kernel, "PUERTO_ESCUCHA_DISPATCH");
-    int socket_dispatch = iniciar_modulo(puerto_escucha_dispatch);
+    int socket_dispatch = iniciar_modulo(puerto_escucha_dispatch, log_kernel);
+
+    // Crea socket de interrupcion
+    //char* puerto_escucha_interrupt = config_get_string_value(config_kernel, "PUERTO_ESCUCHA_INTERRUPT");
+    //int socket_interrupt = iniciar_modulo(puerto_escucha_interrupt, log_kernel);
     
-    int cpu_conectada = establecer_conexion(socket_dispatch);
+    int err = establecer_conexion(socket_dispatch, log_kernel);
+    //int cpu_interrupcion = establecer_conexion(socket_interrupt, log_kernel);
 
-    
+    recibir_mensaje(socket_dispatch,log_kernel);
+    enviar_mensaje('regreso',socket_dispatch);
 
-    if (cpu_conectada == -1)
-    {
-            log_info(log_kernel, "No Funco quizas?");
-    }
-    log_info(log_kernel, "Funco quizas?");
-
+    close(socket_dispatch);
+    log_destroy(log_kernel);
+    config_destroy(config_kernel);
 
     return 0;
 }
