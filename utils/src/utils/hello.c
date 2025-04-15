@@ -120,9 +120,11 @@ void eliminar_paquete(t_paquete* paquete)
 	free(paquete);
 }
 
-void enviar_mensaje(char* mensaje, int socket_cliente)
+void enviar_mensaje(char* mensaje, int socket_cliente, t_log* log_modulo)
 {
 	t_paquete* paquete = malloc(sizeof(t_paquete));
+	log_info(log_modulo, "El mensaje a enviar es %s", mensaje);
+	mensaje = strcat(mensaje, "\0");
 
 	paquete->codigo_operacion = MENSAJE;
 	paquete->buffer = malloc(sizeof(t_buffer));
@@ -133,12 +135,12 @@ void enviar_mensaje(char* mensaje, int socket_cliente)
 	int bytes = paquete->buffer->size + 2*sizeof(int);
 
 	void* a_enviar = serializar_paquete(paquete, bytes);
-
 	send(socket_cliente, a_enviar, bytes, 0);
 
 	free(a_enviar);
 	eliminar_paquete(paquete);
 }
+
 
 void* recibir_buffer(int* size, int socket_cliente)
 {
@@ -147,15 +149,18 @@ void* recibir_buffer(int* size, int socket_cliente)
 	recv(socket_cliente, size, sizeof(int), MSG_WAITALL);
 	buffer = malloc(*size);
 	recv(socket_cliente, buffer, *size, MSG_WAITALL);
-
+	((char*)buffer)[*size] = '\0';
 	return buffer;
 }
 
 void recibir_mensaje(int socket_cliente,t_log * log_modulo)
 {
  	int size;
+	//log_info(log_modulo, "tamaño a recibido es %s", (char*)size);
+
  	char* buffer = recibir_buffer(&size, socket_cliente);
+
+
  	log_info(log_modulo, "Me llego el mensaje %s", buffer);
  	free(buffer);
 }
-

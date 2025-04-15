@@ -36,11 +36,11 @@ int iniciar_conexion(char* ip, char* puerto,t_log* log_modulo);
 
 int establecer_conexion(int socket_servidor,t_log* log_modulo);
 
-void enviar_mensaje(char* mensaje, int socket_cliente);
+//void enviar_mensaje(char* mensaje, int socket_cliente);
 
-void enviar_mensaje(char* mensaje, int socket_cliente);
+void enviar_mensaje(char* mensaje, int socket_cliente,t_log* log_modulo);
 
-void recibir_mensaje(int socket_cliente,t_log * log_modulo);
+void recibir_mensaje(int socket_cliente,t_log* log_modulo);
 
 
 #endif

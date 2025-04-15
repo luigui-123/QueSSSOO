@@ -11,6 +11,7 @@ struct PCB
     int PID;
     int PC;
     int MT [7];
+    //trabajo en progeso.
 };
 
 t_config* iniciar_config()
@@ -25,11 +26,11 @@ int main(int argc, char* argv[]) {
     t_log *log_kernel = log_create("kernel.log", "kernel", false, LOG_LEVEL_INFO);
 
     // Crea socket de dispatch y servidor
-    /*
+    
     char* puerto_escucha_dispatch = config_get_string_value(config_kernel, "PUERTO_ESCUCHA_DISPATCH");
     int socket_dispatch = iniciar_modulo(puerto_escucha_dispatch, log_kernel);
     int err = establecer_conexion(socket_dispatch, log_kernel);
-    */
+    
 
     // Crea socket de interrupcion y servidor
     /*
@@ -39,9 +40,11 @@ int main(int argc, char* argv[]) {
     */
 
     // Crea socket de io y servidor
+    /*
     char* puerto_io = config_get_string_value(config_kernel, "PUERTO_ESCUCHA_IO");
     int socket_io = iniciar_modulo(puerto_io, log_kernel);
     int err_io = establecer_conexion(socket_io, log_kernel);
+    /*
 
     // Crea socket de memoria y conectar
     /*
@@ -50,12 +53,12 @@ int main(int argc, char* argv[]) {
     int conexion_memoria = iniciar_conexion(ip_memoria, puerto_memoria,log_kernel);
     */
 
-    recibir_mensaje(socket_io,log_kernel);
+    recibir_mensaje(socket_dispatch,log_kernel);
     
     //close(socket_interrupt);
-    //close(socket_dispatch);
+    close(socket_dispatch);
     //close(conexion_memoria);
-    close(socket_io);
+    //close(socket_io);
     log_destroy(log_kernel);
     config_destroy(config_kernel);
 
