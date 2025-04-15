@@ -5,38 +5,44 @@
 #include <netdb.h>
 #include <unistd.h>
 
-
-t_log *log_cpu = NULL;
-t_config* cpu_conf = NULL;
-
 t_config* iniciar_config()
 {
 	t_config* nuevo_config = config_create("cpu.conf");
 	return nuevo_config;
 }
 
-
 int main(int argc, char* argv[]) 
 {
-    log_cpu = log_create("cpu.log", "cpu", false, LOG_LEVEL_INFO);
-    cpu_conf = iniciar_config(); 
+    t_log *log_cpu = log_create("cpu.log", "cpu", false, LOG_LEVEL_INFO);
+    t_config*cpu_conf = iniciar_config(); 
 
-    //inicia conexion con Kernel dispatch
+    // Inicia conexion con Kernel dispatch
+    /*
     char* ip_kernel_dispatch = config_get_string_value(cpu_conf, "IP_KERNEL");
     char* puerto_kernel_dispatch = config_get_string_value(cpu_conf, "PUERTO_KERNEL_DISPATCH");
     int conexion_kernel_dispatch = iniciar_conexion(ip_kernel_dispatch, puerto_kernel_dispatch,log_cpu);
+    */
 
+    // Inicia conexion con Kernel interrupcion TOCAR
+    /*
+    char* ip_kernel_dispatch = config_get_string_value(cpu_conf, "IP_KERNEL");
+    char* puerto_kernel_dispatch = config_get_string_value(cpu_conf, "PUERTO_KERNEL_DISPATCH");
+    int conexion_kernel_dispatch = iniciar_conexion(ip_kernel_dispatch, puerto_kernel_dispatch,log_cpu);
+    */
 
+    // Inicia conexion con Memoria
+    char* ip_memoria = config_get_string_value(cpu_conf, "IP_MEMORIA");
+    char* puerto_memoria = config_get_string_value(cpu_conf, "PUERTO_MEMORIA");
+    int conexion_memoria = iniciar_conexion(ip_memoria, puerto_memoria,log_cpu);
+    
+    char* leido = "Ida";
 
-    enviar_mensaje('testeo',conexion_kernel_dispatch);
-    recibir_mensaje(conexion_kernel_dispatch,log_cpu);
-
-    //Inicia conexion con la memoria
-    //int conexion_memoria = iniciar_conexion("8002");
-    //inicia conexion con Kernel interrput
-    //int conexion_kernel_interrput = iniciar_conexion("8003");
-
-    close(conexion_kernel_dispatch);
+    enviar_mensaje(leido,conexion_memoria);
+    //enviar_mensaje(leido,conexion_kernel_dispatch);
+    
+    // Limpieza general
+    //close(conexion_kernel_dispatch);
+    close(conexion_memoria);
     log_destroy(log_cpu);
     config_destroy(cpu_conf);
 
