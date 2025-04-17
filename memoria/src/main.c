@@ -14,6 +14,13 @@ t_config* iniciar_config()
 t_config* memo_conf;
 t_log *log_memo;
 
+int iniciar_socket_servidor(char* puerto, t_log* log)
+{
+    int socket = iniciar_modulo(puerto, log);
+    return socket
+}
+
+
 int main(int argc, char* argv[]) {
     
     log_memo = log_create("memoria.log", "memoria", false, LOG_LEVEL_INFO);
@@ -24,13 +31,15 @@ int main(int argc, char* argv[]) {
     int socket_escucha = iniciar_modulo(puerto_escucha, log_memo);
     
     // Acepta conexion
-    int err = establecer_conexion(socket_escucha, log_memo);
+    int socket_conectado = establecer_conexion(socket_escucha, log_memo);
 
     // Recibe mensaje    
-    recibir_mensaje(socket_escucha,log_memo);
+    recibir_mensaje(socket_conectado,log_memo);
     
     // Limpieza general
     close(socket_escucha);
+    close(socket_conectado);
+
     log_destroy(log_memo);
     config_destroy(memo_conf);
 
