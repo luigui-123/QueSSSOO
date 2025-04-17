@@ -22,11 +22,11 @@ int main(int argc, char* argv[])
     char* puerto_kernel_dispatch = config_get_string_value(cpu_conf, "PUERTO_KERNEL_DISPATCH");
     int conexion_kernel_dispatch = iniciar_conexion(ip_kernel_dispatch, puerto_kernel_dispatch,log_cpu);
     
-    // Inicia conexion con Kernel interrupcion TOCAR
+    // Inicia conexion con Kernel interrupcion
     /*
-    char* ip_kernel_dispatch = config_get_string_value(cpu_conf, "IP_KERNEL");
-    char* puerto_kernel_dispatch = config_get_string_value(cpu_conf, "PUERTO_KERNEL_DISPATCH");
-    int conexion_kernel_dispatch = iniciar_conexion(ip_kernel_dispatch, puerto_kernel_dispatch,log_cpu);
+    char* ip_kernel_interrupt = config_get_string_value(cpu_conf, "IP_KERNEL");
+    char* puerto_kernel_interrupt = config_get_string_value(cpu_conf, "PUERTO_KERNEL_INTERRUPT");
+    int conexion_kernel_interrupt = iniciar_conexion(ip_kernel_interrupt, puerto_kernel_interrupt,log_cpu);
     */
 
     // Inicia conexion con Memoria
