@@ -17,7 +17,7 @@ t_log *log_memo;
 int iniciar_socket_servidor(char* puerto, t_log* log)
 {
     int socket = iniciar_modulo(puerto, log);
-    return socket
+    return socket;
 }
 
 
@@ -35,6 +35,9 @@ int main(int argc, char* argv[]) {
 
     // Recibe mensaje    
     recibir_mensaje(socket_conectado,log_memo);
+
+    char* leido="vuelta";
+    enviar_mensaje(leido,socket_conectado,log_memo);
     
     // Limpieza general
     close(socket_escucha);

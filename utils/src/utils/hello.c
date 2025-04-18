@@ -179,3 +179,18 @@ void recibir_mensaje(int socket_cliente,t_log * log_modulo)
  	log_info(log_modulo, "Me llego el mensaje %s", buffer);
  	free(buffer);
 }
+
+void reenviar_mensaje(int socket_cliente,int socket_servidor,t_log * log_modulo)
+{
+	int size;
+	int cod;
+	//log_info(log_modulo, "tamaño a recibido es %s", (char*)size);
+
+ 	char* buffer = (char*)recibir_buffer(&cod, &size, socket_cliente);
+
+	buffer = strcat(buffer, "\0");
+
+ 	log_info(log_modulo, "Reenviando %s", buffer);
+	enviar_mensaje(buffer,socket_servidor,log_modulo);
+ 	free(buffer);
+}

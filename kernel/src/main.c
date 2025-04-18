@@ -38,12 +38,19 @@ int main(int argc, char* argv[]) {
     t_config* config_kernel = iniciar_config("kernel");
     t_log *log_kernel = log_create("kernel.log", "kernel", false, LOG_LEVEL_INFO);
 
-    // Crea socket de dispatch y servidor
+    // Crea socket de memoria y conectar
     
+    char* puerto_memoria = config_get_string_value(config_kernel, "PUERTO_MEMORIA");
+    char* ip_memoria = config_get_string_value(config_kernel, "IP_MEMORIA");
+    int conexion_memoria = iniciar_conexion(ip_memoria, puerto_memoria,log_kernel);
+    
+
+    // Crea socket de dispatch y servidor
+    /*
     char* puerto_escucha_dispatch = config_get_string_value(config_kernel, "PUERTO_ESCUCHA_DISPATCH");
     int socket_dispatch_listen = iniciar_modulo(puerto_escucha_dispatch, log_kernel);
     int socket_conectado_dispatch = establecer_conexion(socket_dispatch_listen, log_kernel);
-    
+    */
 
     // Crea socket de interrupcion y servidor
     /*
@@ -53,27 +60,23 @@ int main(int argc, char* argv[]) {
     */
 
     // Crea socket de io y servidor
-    /*
+    
     char* puerto_io = config_get_string_value(config_kernel, "PUERTO_ESCUCHA_IO");
     int socket_io = iniciar_modulo(puerto_io, log_kernel);
     int socket_conectado_io = establecer_conexion(socket_io, log_kernel);
-    /*
 
-    // Crea socket de memoria y conectar
-    /*
-    char* puerto_memoria = config_get_string_value(config_kernel, "PUERTO_MEMORIA");
-    char* ip_memoria = config_get_string_value(config_kernel, "IP_MEMORIA");
-    int conexion_memoria = iniciar_conexion(ip_memoria, puerto_memoria,log_kernel);
-    */
+    //recibir_mensaje(socket_conectado_io,log_kernel);
 
-    recibir_mensaje(socket_conectado_dispatch,log_kernel);
+    reenviar_mensaje(socket_conectado_io,conexion_memoria,log_kernel);
+    reenviar_mensaje(conexion_memoria,socket_conectado_io,log_kernel);
+    
     
     //close(socket_interrupt);
-    close(socket_dispatch_listen);
-    close(socket_conectado_dispatch);
+    close(socket_io);
+    close(socket_conectado_io);
     //close(socket_conectado_interrupt);
     //close(socket_conectado_io);
-    //close(conexion_memoria);
+    close(conexion_memoria);
     //close(socket_io);
     log_destroy(log_kernel);
     config_destroy(config_kernel);

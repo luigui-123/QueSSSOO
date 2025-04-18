@@ -29,8 +29,9 @@ int main(int argc, char* argv[]) {
     NO ENVIA BIEN
     NO ENVIA BIEN
     */
-    enviar_mensaje(leido,conexion_kernel);
-
+    enviar_mensaje(leido,conexion_kernel,io_log);
+    recibir_mensaje(conexion_kernel,io_log);
+    
     // Limpieza general
     close(conexion_kernel);
     log_destroy(io_log);

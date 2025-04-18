@@ -42,5 +42,7 @@ void enviar_mensaje(char* mensaje, int socket_cliente,t_log* log_modulo);
 
 void recibir_mensaje(int socket_cliente,t_log* log_modulo);
 
+void reenviar_mensaje(int socket_cliente,int socket_servidor,t_log * log_modulo);
+
 
 #endif
