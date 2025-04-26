@@ -166,7 +166,7 @@ void* recibir_buffer(int* cod, int* size, int socket_cliente)
 		return buffer;
 }
 
-void recibir_mensaje(int socket_cliente,t_log * log_modulo)
+char* recibir_mensaje(int socket_cliente,t_log * log_modulo)
 {
  	int size;
 	int cod;
@@ -177,7 +177,9 @@ void recibir_mensaje(int socket_cliente,t_log * log_modulo)
 	buffer = strcat(buffer, "\0");
 
  	log_info(log_modulo, "Me llego el mensaje %s", buffer);
- 	free(buffer);
+ 	//free(buffer);
+
+	return buffer;
 }
 
 void reenviar_mensaje(int socket_cliente,int socket_servidor,t_log * log_modulo)
