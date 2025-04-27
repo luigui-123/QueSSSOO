@@ -28,6 +28,13 @@ typedef struct
 	t_buffer* buffer;
 } t_paquete;
 
+typedef struct 
+{
+	int pid;
+	int time;
+} ioinfo;
+
+
 void saludar(char* quien);
 
 int iniciar_modulo(char* puerto, t_log* log_modulo);

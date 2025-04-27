@@ -4,6 +4,7 @@
 #include <sys/socket.h>
 #include <netdb.h>
 #include <unistd.h>
+#include <string.h>
 
 t_config* iniciar_config()
 {
@@ -22,15 +23,20 @@ int main(int argc, char* argv[]) {
     char* puerto_kernel = config_get_string_value(io_conf, "PUERTO_KERNEL");
     int conexion_kernel = iniciar_conexion(ip_kernel, puerto_kernel,io_log);
 
-    char* leido = "Ida";
+    ioinfo* proceso;
+    int conectado = 1;
+    char* mensajeFin;
+    mensajeFin = strcat("La solicitud de ", argv[0]);
+    mensajeFin = strcat(mensajeFin, " ha finalizado");
 
-    /*
-    NO ENVIA BIEN
-    NO ENVIA BIEN
-    NO ENVIA BIEN
-    */
-    enviar_mensaje(leido,conexion_kernel,io_log);
+    enviar_mensaje(argv[0],conexion_kernel,io_log);
     recibir_mensaje(conexion_kernel,io_log);
+
+    recv(conexion_kernel, proceso, sizeof(t_ioinfo), MSG_WAITALL);
+    log_info(io_log, "PID: ", proceso->pid, " - Inicio de IO - Tiempo: ", proceso->time);
+    usleep(proceso->time);
+    log_info(io_log, "PID: ", proceso->pid, " - Fin de IO");
+    enviar_mensaje(mensajeFin, conexion_kernel, io_log);
     
     // Limpieza general
     close(conexion_kernel);
