@@ -87,7 +87,7 @@ void* ingresar_conexion(void* conexion)
     enviar_mensaje(mensaje,conexion,log_memo);
     return;
 }
-
+//
 void* gestion_conexiones(){
     // Crea socket y espera
     int socket_escucha = iniciar_modulo(PUERTO_ESCUCHA, log_memo);
