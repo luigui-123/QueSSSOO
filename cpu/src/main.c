@@ -11,9 +11,10 @@ t_config* iniciar_config()
 	return nuevo_config;
 }
 
-int main(int argc, char* argv[]) 
+int main(char* id_cpu) 
 {
     t_log *log_cpu = log_create("cpu.log", "cpu", false, LOG_LEVEL_INFO);
+    log_info(log_cpu,id_cpu);
     t_config*cpu_conf = iniciar_config(); 
 
     // Inicia conexion con Kernel dispatch
