@@ -13,6 +13,7 @@ t_config* iniciar_config()
 
 int main(char* id_cpu) 
 {
+    
     t_log *log_cpu = log_create("cpu.log", "cpu", false, LOG_LEVEL_INFO);
     log_info(log_cpu,id_cpu);
     t_config*cpu_conf = iniciar_config(); 
@@ -39,9 +40,16 @@ int main(char* id_cpu)
     
     char* leido = config_get_string_value(cpu_conf, "REEMPLAZO_CACHE");
 
+
+
+
+
     //enviar_mensaje(leido,conexion_memoria);
     enviar_mensaje(leido,conexion_kernel_dispatch, log_cpu);
     
+    //enviar cpu_id al kernel
+     enviar_mensaje(leido,conexion_kernel_dispatch, id_cpu);
+
     // Limpieza general
     close(conexion_kernel_dispatch);
     //close(conexion_memoria);
@@ -51,7 +59,8 @@ int main(char* id_cpu)
     return 0;
 }
 
-int recibir_procesos(int conexion)
+
+int recibir_procesos(int conexion, char *id_cpu)
 {
     //IMplementar escucha del CPU para recibir los PID y el PC --> una vez los reciba
 
