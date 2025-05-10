@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include <commons/config.h>
 #include <commons/log.h>
+#include <commons/collections/list.h>
+
 /**
 * @brief Imprime un saludo por consola
 * @param quien Módulo desde donde se llama a la función
@@ -51,5 +53,12 @@ void recibir_mensaje(int socket_cliente,t_log* log_modulo);
 
 void reenviar_mensaje(int socket_cliente,int socket_servidor,t_log * log_modulo);
 
+t_list* recibir_paquete(int socket_cliente, t_log * log_modulo);
+
+void enviar_paquete(t_paquete* paquete, int socket_cliente, t_log* log_modulo);
+
+void agregar_a_paquete(t_paquete* paquete, void* valor, int tamanio);
+
+t_paquete* crear_paquete(void);
 
 #endif
