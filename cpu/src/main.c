@@ -4,6 +4,7 @@
 #include <sys/socket.h>
 #include <netdb.h>
 #include <unistd.h>
+#include <stdbool.h>
 
 t_config* iniciar_config()
 {
@@ -11,9 +12,83 @@ t_config* iniciar_config()
 	return nuevo_config;
 }
 
+ int tamanio_tlb = config_get_int_value (cpu.conf,"ENTRADAS_TLB");
+// Estructura para una entrada de la TLB
+typedef struct {
+    int pagina;
+    int marco;
+    bool validez;    // Indica si la entrada es válida
+    int menos_usado;   // Registro del último uso (para LRU)
+} TLBEntrada;
+
+// Estructura para simular la TLB
+typedef struct {
+    TLBEntrada entrada[tamanio_tlb];
+    int contador_acceso; // Contador global para registrar accesos
+} TLB;
+
+// Inicializar la TLB
+void inicializar_tlb(TLB *tlb) {
+    for (int i = 0; i < tamanio_tlb; i++) {
+        tlb- entrada[i].validez = false; // Todas las entradas comienzan como inválidas
+        tlb- entrada[i].menos_usado = -1; // Sin historial de uso
+    }
+    tlb->contador_acceso = 0; // Inicializa el contador global
+}
+
+// Buscar en la TLB
+int buscar_tlb(TLB *tlb, int pagina) {
+    for (int i = 0; i < tamanio_tlb; i++) {
+        if (tlb- entrada[i].validez && tlb- entrada[i].pagina == pagina) {
+            // Actualiza el registro de último uso
+            tlb- entrada[i].menos_usado = tlb->contador_acceso++;
+            printf("TLB hit: Página %d -> Marco %d\n", pagina, tlb- entrada[i].marco);
+            return tlb- entrada[i].marco; // Devuelve el número de marco
+        }
+    }
+    printf("TLB miss para la página %d\n", pagina);
+    return -1; // Si no se encuentra, devuelve -1
+}
+
+// Encuentra el índice LRU para reemplazo
+int buscar_entrada_lru(TLB *tlb) {
+    int indice_lru = -1;
+    int min_menos_usado = __INT_MAX__; // Un valor inicial alto
+
+    for (int i = 0; i < tamanio_tlb; i++) {
+        if (!tlb- entrada[i].validez) {
+            // Si encontramos una entrada inválida, podemos usarla directamente
+            return i;
+        }
+        if (tlb- entrada[i].menos_usado < min_menos_usado) {
+            min_menos_usado = tlb- entrada[i].menos_usado;
+            indice_lru = i;
+        }
+    }
+    return indice_lru;
+}
+
+// Actualizar la TLB usando LRU
+void actualizar_tlb(TLB *tlb, int pagina, int marco) {
+    // Encuentra el índice a reemplazar según LRU
+    int indice = find_lru_entry(tlb);
+
+    // Reemplazar la entrada
+    tlb- entrada[indice].pagina = pagina;
+    tlb- entrada[indice].marco = marco;
+    tlb- entrada[indice].validez = true;
+    tlb- entrada[indice].menos_usado = tlb->contador_acceso++;
+
+    printf("TLB actualizado: Página %d -> Marco %d (Reemplazando entrada %d)\n", 
+           pagina, marco, indice);
+}
+
+
 int main(char* id_cpu) 
 {
-    
+    int tamanio_tlb = config_get_int_value (cpu.conf,"ENTRADAS_TLB");
+    char* algoritmo_de_reemplazo_TLB= config_get_string_value(cpu_conf, "REEMPLAZ0_TLB");
+
     t_log *log_cpu = log_create("cpu.log", "cpu", false, LOG_LEVEL_INFO);
     log_info(log_cpu,id_cpu);
     t_config*cpu_conf = iniciar_config(); 
@@ -40,7 +115,7 @@ int main(char* id_cpu)
     
     char* leido = config_get_string_value(cpu_conf, "REEMPLAZO_CACHE");
 
-
+    
 
 
 
@@ -58,6 +133,9 @@ int main(char* id_cpu)
 
     return 0;
 }
+
+
+
 
 
 int recibir_procesos(int conexion, char *id_cpu)

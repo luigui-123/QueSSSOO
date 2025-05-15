@@ -30,9 +30,15 @@ int main(int argc, char* argv[]) {
     char* puerto_escucha= config_get_string_value(memo_conf, "PUERTO_ESCUCHA");
     int socket_escucha = iniciar_modulo(puerto_escucha, log_memo);
     
-    // Acepta conexion
+    // Acepta conexion 
+    //Por cada nueva conexion generar un nuevo hilo 
+    
+    while (1) {
     int socket_conectado = establecer_conexion(socket_escucha, log_memo);
-
+     pthread_t thread;
+     pthread_create(&thread,NULL,(void*) atender_cliente, socket_conectado);
+     pthread_detach(thread);
+    }
     // Recibe mensaje    
     recibir_mensaje(socket_conectado,log_memo);
 
