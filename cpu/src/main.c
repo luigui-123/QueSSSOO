@@ -71,7 +71,7 @@ int buscar_entrada_lru(TLB *tlb) {
 // Actualizar la TLB usando LRU
 void actualizar_tlb(TLB *tlb, int pagina, int marco) {
     // Encuentra el índice a reemplazar según LRU
-    int indice = find_lru_entry(tlb);
+    int indice = buscar_entrada_lru(tlb);
 
     // Reemplazar la entrada
     tlb- entrada[indice].pagina = pagina;
