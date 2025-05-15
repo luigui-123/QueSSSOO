@@ -18,9 +18,9 @@ int main(int argc, char* argv[])
 
     // Inicia conexion con Kernel dispatch
     
-    char* ip_kernel_dispatch = config_get_string_value(cpu_conf, "IP_KERNEL");
+    /*char* ip_kernel_dispatch = config_get_string_value(cpu_conf, "IP_KERNEL");
     char* puerto_kernel_dispatch = config_get_string_value(cpu_conf, "PUERTO_KERNEL_DISPATCH");
-    int conexion_kernel_dispatch = iniciar_conexion(ip_kernel_dispatch, puerto_kernel_dispatch,log_cpu);
+    int conexion_kernel_dispatch = iniciar_conexion(ip_kernel_dispatch, puerto_kernel_dispatch,log_cpu);*/
     
     // Inicia conexion con Kernel interrupcion
     /*
@@ -30,20 +30,22 @@ int main(int argc, char* argv[])
     */
 
     // Inicia conexion con Memoria
-    /*
+    
     char* ip_memoria = config_get_string_value(cpu_conf, "IP_MEMORIA");
     char* puerto_memoria = config_get_string_value(cpu_conf, "PUERTO_MEMORIA");
     int conexion_memoria = iniciar_conexion(ip_memoria, puerto_memoria,log_cpu);
-    */
     
-    char* leido = config_get_string_value(cpu_conf, "REEMPLAZO_CACHE");
+    
+    //char* leido = config_get_string_value(cpu_conf, "REEMPLAZO_CACHE");
+    char* leido="Soy la cpu nueva 2";
 
     //enviar_mensaje(leido,conexion_memoria);
-    enviar_mensaje(leido,conexion_kernel_dispatch, log_cpu);
+    enviar_mensaje(leido,conexion_memoria, log_cpu);
+    recibir_mensaje(conexion_memoria,log_cpu);
     
     // Limpieza general
-    close(conexion_kernel_dispatch);
-    //close(conexion_memoria);
+    //close(conexion_kernel_dispatch);
+    close(conexion_memoria);
     log_destroy(log_cpu);
     config_destroy(cpu_conf);
 
@@ -62,3 +64,4 @@ int procesamiento(int pid, int pc, int conexion_memoria)
     //procesamiento en proceso
     return 0;
 }
+
