@@ -8,6 +8,7 @@
 #include <commons/collections/queue.h>
 #include <pthread.h>
 #include <string.h>
+#include <semaphore.h>
 
 
 struct pcb
@@ -18,12 +19,21 @@ struct pcb
     int ME [7];
     char* tamanio;
     char* path;
-
     //trabajo en progeso.
 };
 
+t_list* lista_cpu;
+t_list* lista_io;
+
 t_config* config_kernel;
 t_log* log_kernel;
+t_queue* lista_new;
+t_queue* lista_ready; 
+t_queue* lista_sus_ready; 
+t_queue* lista_execute; 
+t_queue* lista_bloqued; 
+t_queue* lista_sus_bloqued; 
+t_queue* lista_finished;
 
 struct Cpu
 {
@@ -31,6 +41,13 @@ struct Cpu
     int socket_interrupt;
     char* id;
     int ocupado;
+
+};
+struct pcb_execute
+{
+    int pid;
+    int pc;
+    struct Cpu* cpu_a_cargo;
 
 };
 
@@ -46,7 +63,7 @@ t_config* iniciar_config()
 	return nuevo_config;
 }
 
-void syscall_init_procc(char* tamanio, char* nombre, t_list* lista_new)
+void syscall_init_procc(char* tamanio, char* nombre)
 {
     struct pcb* proceso_nuevo;
 
@@ -63,10 +80,8 @@ void syscall_init_procc(char* tamanio, char* nombre, t_list* lista_new)
 
 
 
-void syscall_io(t_list* lista_io)
+int syscall_io(char* dispositivo, int tiempo, int pid)
 {
-
-
 
 }
 
@@ -78,7 +93,7 @@ int peticion_memoria()
     return conexion_memoria;
 }
 
-void escuchar_cpu(t_list* lista_cpu)
+void* escuchar_cpu()
 {
     char* puerto_escucha_dispatch = config_get_string_value(config_kernel, "PUERTO_ESCUCHA_DISPATCH");
     int socket_dispatch_listen = iniciar_modulo(puerto_escucha_dispatch, log_kernel);
@@ -113,14 +128,16 @@ void escuchar_cpu(t_list* lista_cpu)
         //Crear Proceso --> "Escuchar_CPU_Especifica" --> Datos conexiones, etc y de ahi
         // se pueden hacer las Syscalls. 
     }
-
+    return NULL;
 
 }
 
-void escuchar_io(t_list* lista_io)
+void* escuchar_io()
 {
     char* puerto_escucha_io = config_get_string_value(config_kernel, "PUERTO_ESCUCHA_DISPATCH");
     int socket_io = iniciar_modulo(puerto_escucha_io, log_kernel);
+    while (1)
+    {
     int socket_conectado_io = establecer_conexion(socket_io, log_kernel);
 
     //Handshake
@@ -138,30 +155,64 @@ void escuchar_io(t_list* lista_io)
     nueva_io->nombre = nombre;
 
     list_add(lista_io, nueva_io);
+    }
+    return NULL;
+
 }
 
 
-void cambio_estado_ready(t_queue* lista_usada, t_queue* lista_ready, struct pcb* proceso)
+void cambio_estado_ready(struct pcb* proceso)
 {
-       
-    char* tamnio_proceso = proceso->tamanio;
-    int conexion_memoria = peticion_memoria();
-    enviar_mensaje(tamnio_proceso, conexion_memoria, log_kernel);
-    if (recibir_mensaje(conexion_memoria, log_kernel) == "Ok")
+    sem_t semaforo_ready;
+    sem_init(&semaforo_ready, 0, 1);
+    if (!queue_is_empty(lista_sus_ready))
     {
-        queue_pop(lista_usada);
-        queue_push(lista_ready, proceso);
-    }  
-    else
-    {
+        //mutex
+        sem_wait(&semaforo_ready);
+        proceso = queue_pop(lista_sus_ready);
+        char* tamnio_proceso = proceso->tamanio;
+        int conexion_memoria = peticion_memoria();
+        enviar_mensaje(tamnio_proceso, conexion_memoria, log_kernel);
+        if (recibir_mensaje(conexion_memoria, log_kernel) == "Ok")
+        {
+            queue_pop(lista_sus_ready);
+            queue_push(lista_ready, proceso);
+        }  
+        else
+        {
         // Casteo el t_queu a T_list y sort moment
-
         //Se frena. --> Semaforo --> COngelar semaforo y esperar a que proceso entre a Finished
         //Revisar para escucha activa de otra manera.
-        
+        }
+        sem_post(&semaforo_ready);
     }
-}
 
+    if (!queue_is_empty(lista_new))
+    {
+        sem_wait(&semaforo_ready);
+        proceso = queue_pop(lista_sus_ready);
+        char* tamnio_proceso = proceso->tamanio;
+        int conexion_memoria = peticion_memoria();
+        enviar_mensaje(tamnio_proceso, conexion_memoria, log_kernel);
+        if (recibir_mensaje(conexion_memoria, log_kernel) == "Ok")
+        {
+            queue_pop(lista_sus_ready);
+            queue_push(lista_ready, proceso);
+        }  
+        else
+        {
+        // Casteo el t_queu a T_list y sort moment
+        //Se frena. --> Semaforo --> COngelar semaforo y esperar a que proceso entre a Finished
+        //Revisar para escucha activa de otra manera.
+        }
+        sem_post(&semaforo_ready);
+    }
+
+}
+void cambio_estado_bloqued(struct pcb* proceso)
+{
+    return;
+}
 /*
 
 Preguntas / Aclaraciones
@@ -181,31 +232,16 @@ CPUs multiples --> lista al entrar al execute --> CPU = cant cpu
 Exectue --> EScucha especificamente a la CPU
 */ 
 
-void planifacion_largo_plazo(t_queue* lista_new, t_queue* lista_ready, t_queue* lista_sus_ready)
+void planifacion_largo_plazo()
 {
     struct pcb* proceso;
     char* tipo_planificacion = config_get_string_value(config_kernel, "ALGORITMO_INGRESO_A_READY");
     if (tipo_planificacion == "FIFO")
     {
-        if (!queue_is_empty(lista_sus_ready))
-        {
-            proceso = queue_peek(lista_sus_ready);
-            cambio_estado_ready(lista_sus_ready, lista_ready ,proceso);
-
-        }
-        else if (!queue_is_empty(lista_new))
-        {
-            proceso = queue_peek(lista_new);
-            cambio_estado_ready(lista_new, lista_ready ,proceso);
-        }
-        else
-        {
-            return;
-        }
+        cambio_estado_ready(proceso);
     }
     else if (tipo_planificacion == "PMCP")
     {
-        struct pcb* proceso_chico;
         if (!queue_is_empty(lista_sus_ready))
         {
             /*
@@ -232,42 +268,104 @@ void planifacion_largo_plazo(t_queue* lista_new, t_queue* lista_ready, t_queue* 
 
 }
 
-bool buscar_disponible(void *elemento) 
+int buscar_disponible(void *elemento) 
 {
     struct Cpu* cpu_especifica = (struct Cpu *) elemento;
     return cpu_especifica->ocupado == 0;
 }
 
-void escucha_cpu_especifica(int socket_cpu, struct pcb* proceso)
+int encontrar_proceso(int id, void* elemento)
+{
+    struct pcb* proceso = (struct pcb*) elemento;
+    return proceso->PID == id;
+}
+
+void* escucha_cpu_especifica(void* proceso_pasado)
 {
     t_paquete *proceso_a_ejecutar = crear_paquete();
-    agregar_a_paquete(proceso_a_ejecutar, proceso, sizeof(struct pcb));
-    enviar_paquete(proceso_a_ejecutar, socket_cpu, log_kernel);
+    struct pcb_execute* proceso = (struct pcb_execute*) proceso_pasado;
+    agregar_a_paquete(proceso_a_ejecutar, proceso, sizeof(struct pcb_execute));     
+    enviar_paquete(proceso_a_ejecutar, proceso->cpu_a_cargo->socket_dispatch, log_kernel);
+        t_list* paquete_recibido = recibir_paquete(proceso->cpu_a_cargo->socket_dispatch, log_kernel);
+        
+        // [0] = Razón --> 0 = Exit, 1 = Init, 2 = Dump, 3 = I/O, 4 interrupcion
+        // [1] = Parametro Reservado para el PID
+        // [2] = PC
+        // [3...] = Parametros adicionales.
+        // IO --> Disp y tiempo / InitPrco -> Archivo y tamanio
+        //  
+        int tamanio_lista = list_size; 
+        int pid_proceso_usado = (int)list_get(paquete_recibido, 1);
+        if 	(list_get(paquete_recibido, 0) ==  0) //Exit --> TERMINA proceso, no interrumpe
+        {
+            //mandar_proceso de nuevo a ready 
+            //revisar para Listas.
+            log_info(log_kernel, ""); //Proceso para enviar metricas
+            sem_t semaphore_execute_out;
+            sem_wait(&semaphore_execute_out);
+                list_remove_element ((t_list*)lista_execute, list_find((t_list*)lista_execute, encontrar_proceso(pid_proceso_usado, lista_execute)));
+                proceso->cpu_a_cargo->ocupado=0;
+            sem_post(&semaphore_execute_out); 
+            return NULL;
+        }
+        else if (list_get(paquete_recibido, 0) ==  1) //Init
+        {
+            syscall_init_procc(list_get(paquete_recibido, 3), list_get(paquete_recibido, 4));
+        }
+        else if (list_get(paquete_recibido, 0) ==  2) //Dump
+        {
+            
+        }
+        else if (list_get(paquete_recibido, 0) ==  3) //IO
+        {
+            int existe_io = syscall_io((char*)list_get(paquete_recibido, 3), (int)list_get(paquete_recibido, 4), pid_proceso_usado);
+            if (existe_io) //true
+            {
+                sem_t semaphore_execute_io;
+                sem_wait(&semaphore_execute_io);
+                struct pcb* proceso_a_bloquear = list_find((t_list*)lista_execute, encontrar_proceso(pid_proceso_usado, lista_execute));
+
+                cambio_estado_bloqued(proceso_a_bloquear); //hacer función
+                list_remove_element ((t_list*)lista_execute, list_find((t_list*)lista_execute, encontrar_proceso(pid_proceso_usado, lista_execute)));
+                proceso->cpu_a_cargo->ocupado=0;
+                sem_post(&semaphore_execute_io); 
+            }
+        }
 }
 
 
-void cambio_estado_execute(t_queue* lista_ready, t_queue* lista_execute, struct Cpu* cpu)
+void cambio_estado_execute(struct Cpu* cpu)
 {
-    struct pcb* proceso = queue_pop(lista_ready);
-    queue_push(lista_execute, proceso);
+    //mutex
+    sem_t semaphore_execute;
 
-    int socket_cpu = cpu->socket_dispatch;
+    sem_wait(&semaphore_execute);
+        struct pcb* proceso = queue_pop(lista_ready);
+        queue_push(lista_execute, proceso);
+    sem_post(&semaphore_execute); 
+    //mutex
+
+    struct pcb_execute* proceso_a_ejecutar;
+    proceso_a_ejecutar->pid = proceso->PID;
+    proceso_a_ejecutar->cpu_a_cargo = cpu;
+    proceso_a_ejecutar->pid = proceso->PC;
 
     pthread_t escucha_cpu_stream;
-    pthread_create(&escucha_cpu_stream, NULL, escucha_cpu_especifica, socket_cpu, proceso);
-    pthread_detach(&escucha_cpu_stream);
+    pthread_create(&escucha_cpu_stream, NULL, escucha_cpu_especifica, (void*)proceso_a_ejecutar);
+    //Struct o lista global?
+    pthread_detach(escucha_cpu_stream);
 
 }
 
 
-void planificacion_corto_plazo(t_queue* lista_ready, t_queue* lista_execute, t_list* listas_cpu)
+void planificacion_corto_plazo()
 {
 
     char* tipo_planificacion = config_get_string_value(config_kernel, "ALGORITMO_INGRESO_A_READY");
     if (strcmp(tipo_planificacion, "FIFO") == 0)
     {
-        struct Cpu* cpu_libre = (struct Cpu*) list_find(listas_cpu, buscar_disponible);
-        if (cpu_libre != NULL)
+        struct Cpu* cpu_libre = (struct Cpu*) list_find(lista_cpu, buscar_disponible);
+        if (cpu_libre != NULL) //Cambiar a WHile?
         {
             cpu_libre->ocupado = 1;
 
@@ -275,7 +373,6 @@ void planificacion_corto_plazo(t_queue* lista_ready, t_queue* lista_execute, t_l
         }   
         else
         {
-            //pensar que puta mierda hago aca. 
             //Lo mejor seria un semaforo...
         }
     }
@@ -287,17 +384,17 @@ void planificacion_corto_plazo(t_queue* lista_ready, t_queue* lista_execute, t_l
 
 int main(int argc, char* argv[]) {
     //Procesos
-    t_queue* lista_new = queue_create();
-    t_queue* lista_ready = queue_create();
-    t_queue* lista_sus_ready = queue_create();
-    t_queue* lista_execute = queue_create();
-    t_queue* lista_bloqued = queue_create();
-    t_queue* lista_sus_bloqued = queue_create();
-    t_queue* lista_finished = queue_create();
+    lista_new = queue_create();
+    lista_ready = queue_create();
+    lista_sus_ready = queue_create();
+    lista_execute = queue_create();
+    lista_bloqued = queue_create();
+    lista_sus_bloqued = queue_create();
+    lista_finished = queue_create();
 
     //Listas de Modulos
-    t_list* lista_cpu = list_create();
-    t_list* lista_io = list_create();
+    lista_cpu = list_create();
+    lista_io = list_create();
 
     //Kernel "Core"
     config_kernel = iniciar_config("kernel");
