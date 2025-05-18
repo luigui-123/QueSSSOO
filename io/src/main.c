@@ -32,7 +32,7 @@ int main(int argc, char* argv[]) {
     enviar_mensaje(argv[0],conexion_kernel,io_log);
     recibir_mensaje(conexion_kernel,io_log);
 
-    recv(conexion_kernel, proceso, sizeof(t_ioinfo), MSG_WAITALL);
+    recv(conexion_kernel, proceso, sizeof(ioinfo), MSG_WAITALL);
     log_info(io_log, "PID: ", proceso->pid, " - Inicio de IO - Tiempo: ", proceso->time);
     usleep(proceso->time);
     log_info(io_log, "PID: ", proceso->pid, " - Fin de IO");

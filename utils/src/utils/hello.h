@@ -36,6 +36,11 @@ typedef struct
 	int time;
 } ioinfo;
 
+typedef struct
+{
+	int pid;
+	int pc;
+} cpuinfo;
 
 void saludar(char* quien);
 
@@ -49,7 +54,7 @@ int establecer_conexion(int socket_servidor,t_log* log_modulo);
 
 void enviar_mensaje(char* mensaje, int socket_cliente,t_log* log_modulo);
 
-void recibir_mensaje(int socket_cliente,t_log* log_modulo);
+char *recibir_mensaje(int socket_cliente,t_log* log_modulo);
 
 void reenviar_mensaje(int socket_cliente,int socket_servidor,t_log * log_modulo);
 
