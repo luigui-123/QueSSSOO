@@ -23,8 +23,6 @@ int main(int argc, char* argv[]) {
     char* puerto_kernel = config_get_string_value(io_conf, "PUERTO_KERNEL");
     int conexion_kernel = iniciar_conexion(ip_kernel, puerto_kernel,io_log);
 
-    ioinfo* proceso;
-    int conectado = 1;
     char* mensajeFin;
     mensajeFin = strcat("La solicitud de ", argv[0]);
     mensajeFin = strcat(mensajeFin, " ha finalizado");
@@ -32,10 +30,11 @@ int main(int argc, char* argv[]) {
     enviar_mensaje(argv[0],conexion_kernel,io_log);
     recibir_mensaje(conexion_kernel,io_log);
 
-    recv(conexion_kernel, proceso, sizeof(ioinfo), MSG_WAITALL);
-    log_info(io_log, "PID: ", proceso->pid, " - Inicio de IO - Tiempo: ", proceso->time);
-    usleep(proceso->time);
-    log_info(io_log, "PID: ", proceso->pid, " - Fin de IO");
+    t_list *proceso;
+    proceso = recibir_paquete(conexion_kernel, io_log);
+    log_info(io_log, "PID: ", list_get(proceso, 0), " - Inicio de IO - Tiempo: ", list_get(proceso, 1));
+    usleep(list_get(proceso, 1));
+    log_info(io_log, "PID: ", list_get(proceso, 0), " - Fin de IO");
     enviar_mensaje(mensajeFin, conexion_kernel, io_log);
     
     // Limpieza general

@@ -30,18 +30,6 @@ typedef struct
 	t_buffer* buffer;
 } t_paquete;
 
-typedef struct 
-{
-	int pid;
-	int time;
-} ioinfo;
-
-typedef struct
-{
-	int pid;
-	int pc;
-} cpuinfo;
-
 void saludar(char* quien);
 
 int iniciar_modulo(char* puerto, t_log* log_modulo);
