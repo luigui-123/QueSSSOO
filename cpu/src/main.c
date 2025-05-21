@@ -2,10 +2,32 @@
 #include <commons/log.h>
 #include <commons/config.h>
 #include <commons/string.h>
+#include <commons/collections/list.h>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <unistd.h>
 #include <stdbool.h>
+
+typedef struct
+{
+    int tipo;
+	int pid;
+	int pc;
+} cpuinfo;
+
+typedef struct
+{
+    int tipo;
+    int pid;
+    int pc;
+} syscallinfo;
+
+typedef struct
+{
+    int tipo;   //1-Read / 2-Write
+    int pid;
+    int direccion;
+} memoriainfo;
 
 t_config* iniciar_config()
 {
@@ -151,57 +173,68 @@ int main(char* id_cpu)
     //enviar cpu_id al kernel
     enviar_mensaje(leido,conexion_kernel_dispatch, id_cpu);
 
-    cpuinfo *proceso;
+    t_list *proceso;
     char *instruccion;
     bool interrupcion;
 
     //while (cpu conectada){
         proceso = recibir_procesos(conexion_kernel_dispatch, id_cpu);
+        cpuinfo *procesocpu;
+        procesocpu = malloc(sizeof(cpuinfo));
+        procesocpu->tipo = 0;
+        procesocpu->pid = list_get(proceso, 0);
+        procesocpu->pc = list_get(proceso, 1);
         do{
-            instruccion = obtener_instruccion(proceso, conexion_memoria, log_cpu);
-            decodear_y_ejecutar_instruccion(instruccion, proceso, conexion_memoria, log_cpu);
+            instruccion = obtener_instruccion(procesocpu, conexion_memoria, log_cpu);
+            decodear_y_ejecutar_instruccion(instruccion, procesocpu, conexion_memoria, conexion_kernel_dispatch, log_cpu);
             //interrupcion = check_interrupt()
         }while(!interrupcion);
-        send(conexion_kernel_dispatch, proceso, sizeof(cpuinfo), 0);
+        t_paquete *paquete = crear_paquete();
+        agregar_a_paquete(paquete, procesocpu, sizeof(cpuinfo));
+        enviar_paquete(paquete, conectar_kernel_dispatch, log_cpu);
+        free(procesocpu);
     //}
 
     // Limpieza general
     close(conexion_kernel_dispatch);
-    //close(conexion_memoria);
+    close(conexion_memoria);
     log_destroy(log_cpu);
     config_destroy(cpu_conf);
 
     return 0;
 }
 
-cpuinfo *recibir_procesos(int conexion, char *id_cpu)
+t_list *recibir_procesos(int conexion, t_log *log_cpu)
 {
-    cpuinfo *proceso;
-    recv(conexion, proceso, sizeof(cpuinfo), MSG_WAITALL);
+    t_list *proceso;
+    proceso = recibir_paquete(conexion, log_cpu);
 
     return proceso;
 }
 
-char *obtener_instruccion(cpuinfo *proceso, int conexion_memoria, t_log *log_cpu)
+char *obtener_instruccion(cpuinfo *procesocpu, int conexion_memoria, t_log *log_cpu)
 {
     char * instruccion;
-    send(conexion_memoria, proceso, sizeof(cpuinfo), 0);
+    t_paquete *paquete = crear_paquete();
+    agregar_a_paquete(paquete, procesocpu, sizeof(cpuinfo));
+    enviar_paquete(paquete, conexion_memoria, log_cpu);
     instruccion = recibir_mensaje(conexion_memoria, log_cpu);
 
     return instruccion;
 }
 
-void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, int conexion_memoria, t_log *log_cpu)
+void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, int conexion_memoria, int conexion_kernel, t_log *log_cpu)
 {
     char *instruccion_separada[] = string_split(instruccion, " ");
     string_to_upper(instruccion_separada[0]);
     if(instruccion_separada[0] == "WRITE"){
-        traducir_direccion(instruccion_separada[1]);
-        //send();
+        //int dir_fisica = traducir_direccion(instruccion_separada[1]);
+
+        
         proceso->pc = proceso->pc + 1;
 
     } else if(instruccion_separada[0] == "READ"){
-        traducir_direccion(instruccion_separada[1]);
+        //int dir_fisica = traducir_direccion(instruccion_separada[1]);
         //send();
         //recv();
         //log_info(log_cpu, valor_leido);
@@ -211,19 +244,59 @@ void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, int co
         proceso->pc = atoi(instruccion_separada[1]);
 
     } else if(instruccion_separada[0] == "IO"){
-        //send() a kernel
+        syscallinfo *io;
+        io = malloc(sizeof(syscallinfo));
+        io->tipo = 3;
+        io->pid = proceso->pid;
+        io->pc = proceso->pc + 1;
+        char *dispositivo = instruccion_separada[1];
+        int time = atoi(instruccion_separada[2]);
+        t_paquete *paquete;
+        agregar_a_paquete(paquete, io, sizeof(syscallinfo));
+        agregar_a_paquete(paquete, dispositivo, sizeof(dispositivo));
+        agregar_a_paquete(paquete, time, sizeof(int));
+        enviar_paquete(paquete, conexion_kernel, log_cpu);
+        free(io);
         proceso->pc = proceso->pc + 1;
 
     } else if(instruccion_separada[0] == "INIT_PROC"){
-        //send() a kernel
+        syscallinfo *init;
+        init = malloc(sizeof(syscallinfo));
+        init->tipo = 1;
+        init->pid = proceso->pid;
+        init->pc = proceso->pc + 1;
+        char *archivo = instruccion_separada[1];
+        int tamanio = atoi(instruccion_separada[2]);
+        t_paquete *paquete;
+        agregar_a_paquete(paquete, init, sizeof(syscallinfo));
+        agregar_a_paquete(paquete, archivo, sizeof(archivo));
+        agregar_a_paquete(paquete, tamanio, sizeof(int));
+        enviar_paquete(paquete, conexion_kernel, log_cpu);
+        free(init);
         proceso->pc = proceso->pc + 1;
 
     } else if(instruccion_separada[0] == "DUMP_MEMORY"){
-        //send() a kernel
+        syscallinfo *dump;
+        dump = malloc(sizeof(syscallinfo));
+        dump->tipo = 2;
+        dump->pid = proceso->pid;
+        dump->pc = proceso->pc + 1;
+        t_paquete *paquete;
+        agregar_a_paquete(paquete, dump, sizeof(syscallinfo));
+        enviar_paquete(paquete, conexion_kernel, log_cpu);
+        free(dump);
         proceso->pc = proceso->pc + 1;
 
     } else if(instruccion_separada[0] == "EXIT"){
-        //send() a kernel
+        syscallinfo *exit;
+        exit = malloc(sizeof(syscallinfo));
+        exit->tipo = 0;
+        exit->pid = proceso->pid;
+        exit->pc = proceso->pc;
+        t_paquete *paquete;
+        agregar_a_paquete(paquete, exit, sizeof(syscallinfo));
+        enviar_paquete(paquete, conexion_kernel, log_cpu);
+        free(exit);
     }
 
     return 0;
