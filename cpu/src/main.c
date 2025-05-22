@@ -229,15 +229,39 @@ void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, int co
     string_to_upper(instruccion_separada[0]);
     if(instruccion_separada[0] == "WRITE"){
         //int dir_fisica = traducir_direccion(instruccion_separada[1]);
-
-        
+        int dir_fisica;
+        memoriainfo *write;
+        write = malloc(sizeof(memoriainfo));
+        write->tipo = 2;
+        write->pid = proceso->pid;
+        write->direccion = dir_fisica;
+        char *dato = instruccion_separada[2];
+        int longitud = string_length(dato);
+        t_paquete *paquete = crear_paquete();
+        agregar_a_paquete(paquete, write, sizeof(memoriainfo));
+        agregar_a_paquete(paquete, dato, (longitud+1)*sizeof(char));
+        enviar_paquete(paquete, conexion_memoria, log_cpu);
+        free(write);
+        recibir_mensaje(conexion_memoria, log_cpu); //Recibo el OK de memoria
         proceso->pc = proceso->pc + 1;
 
     } else if(instruccion_separada[0] == "READ"){
         //int dir_fisica = traducir_direccion(instruccion_separada[1]);
-        //send();
-        //recv();
-        //log_info(log_cpu, valor_leido);
+        int dir_fisica;
+        memoriainfo *read;
+        read = malloc(sizeof(memoriainfo));
+        read->tipo = 1;
+        read->pid = proceso->pid;
+        read->direccion = dir_fisica;
+        int tamanio = atoi(instruccion_separada[2]);
+        t_paquete *paquete = crear_paquete();
+        agregar_a_paquete(paquete, read, sizeof(memoriainfo));
+        agregar_a_paquete(paquete, tamanio, sizeof(int));
+        enviar_paquete(paquete, conexion_memoria, log_cpu);
+        free(read);
+        char *leido = recibir_mensaje(conexion_memoria, log_cpu);
+        printf(leido);
+        log_info(log_cpu, leido);
         proceso->pc = proceso->pc + 1;
 
     } else if(instruccion_separada[0] == "GOTO"){
@@ -250,10 +274,11 @@ void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, int co
         io->pid = proceso->pid;
         io->pc = proceso->pc + 1;
         char *dispositivo = instruccion_separada[1];
+        int longitud = string_length(dispositivo);
         int time = atoi(instruccion_separada[2]);
-        t_paquete *paquete;
+        t_paquete *paquete = crear_paquete();
         agregar_a_paquete(paquete, io, sizeof(syscallinfo));
-        agregar_a_paquete(paquete, dispositivo, sizeof(dispositivo));
+        agregar_a_paquete(paquete, dispositivo, (longitud+1)*sizeof(char));
         agregar_a_paquete(paquete, time, sizeof(int));
         enviar_paquete(paquete, conexion_kernel, log_cpu);
         free(io);
@@ -266,10 +291,11 @@ void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, int co
         init->pid = proceso->pid;
         init->pc = proceso->pc + 1;
         char *archivo = instruccion_separada[1];
+        int longitud = string_length(archivo);
         int tamanio = atoi(instruccion_separada[2]);
-        t_paquete *paquete;
+        t_paquete *paquete = crear_paquete();
         agregar_a_paquete(paquete, init, sizeof(syscallinfo));
-        agregar_a_paquete(paquete, archivo, sizeof(archivo));
+        agregar_a_paquete(paquete, archivo, (longitud+1)*sizeof(char));
         agregar_a_paquete(paquete, tamanio, sizeof(int));
         enviar_paquete(paquete, conexion_kernel, log_cpu);
         free(init);
@@ -281,7 +307,7 @@ void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, int co
         dump->tipo = 2;
         dump->pid = proceso->pid;
         dump->pc = proceso->pc + 1;
-        t_paquete *paquete;
+        t_paquete *paquete = crear_paquete();
         agregar_a_paquete(paquete, dump, sizeof(syscallinfo));
         enviar_paquete(paquete, conexion_kernel, log_cpu);
         free(dump);
@@ -293,7 +319,7 @@ void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, int co
         exit->tipo = 0;
         exit->pid = proceso->pid;
         exit->pc = proceso->pc;
-        t_paquete *paquete;
+        t_paquete *paquete = crear_paquete();
         agregar_a_paquete(paquete, exit, sizeof(syscallinfo));
         enviar_paquete(paquete, conexion_kernel, log_cpu);
         free(exit);
