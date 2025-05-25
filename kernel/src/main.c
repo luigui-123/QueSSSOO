@@ -22,11 +22,16 @@ struct pcb
     //trabajo en progeso.
 };
 
+//Listas
 t_list* lista_cpu;
 t_list* lista_io;
 
+//Misc
+int contador_procesos;
 t_config* config_kernel;
 t_log* log_kernel;
+
+//Queues de Procesos
 t_queue* lista_new;
 t_queue* lista_ready; 
 t_queue* lista_sus_ready; 
@@ -34,6 +39,13 @@ t_queue* lista_execute;
 t_queue* lista_bloqued; 
 t_queue* lista_sus_bloqued; 
 t_queue* lista_finished;
+
+//Semaforos
+sem_t semaforo_ready;
+sem_t semaforo_bloqued;
+sem_t semaforo_execute;
+sem_t semaforo_new;
+sem_t semaforo_ready_sus;
 
 struct Cpu
 {
@@ -69,15 +81,28 @@ void syscall_init_procc(char* tamanio, char* nombre)
 
     proceso_nuevo = malloc(sizeof(struct pcb));
 
-    proceso_nuevo->PID = queue_size(lista_new);
+    proceso_nuevo->PID = contador_procesos;
     proceso_nuevo->tamanio = tamanio;
     proceso_nuevo->path = nombre;
     proceso_nuevo->PC = 0;
-
+    sem_wait(&semaforo_new);
     queue_push(lista_new, proceso_nuevo);
+    contador_procesos+=1;
+    sem_post(&semaforo_new);
 
+    
 }
 
+char* syscall_dump_memory(int pid_proceso)
+{
+    int conexion = peticion_memoria();
+    t_paquete* paquete_dump = crear_paquete();
+    agregar_a_paquete(paquete_dump, pid_proceso, sizeof(int));
+    enviar_paquete(paquete_dump, conexion, log_kernel);
+    //Preguntar que significa "Error"
+    
+    return recibir_mensaje(conexion, log_kernel);
+}
 
 
 int syscall_io(char* dispositivo, int tiempo, int pid)
@@ -163,20 +188,44 @@ void* escuchar_io()
 
 void cambio_estado_ready(struct pcb* proceso)
 {
-    sem_t semaforo_ready;
-    sem_init(&semaforo_ready, 0, 1);
     if (!queue_is_empty(lista_sus_ready))
     {
         //mutex
-        sem_wait(&semaforo_ready);
-        proceso = queue_pop(lista_sus_ready);
+        sem_wait(&semaforo_ready_sus);
+        proceso = queue_peek(lista_sus_ready);
+        
         char* tamnio_proceso = proceso->tamanio;
         int conexion_memoria = peticion_memoria();
         enviar_mensaje(tamnio_proceso, conexion_memoria, log_kernel);
         if (recibir_mensaje(conexion_memoria, log_kernel) == "Ok")
         {
-            queue_pop(lista_sus_ready);
+            sem_wait(&semaforo_ready);
+            proceso = queue_pop(lista_sus_ready);
             queue_push(lista_ready, proceso);
+            sem_post(&semaforo_ready);
+        }
+        else
+        {
+        // Casteo el t_queu a T_list y sort moment
+        //Se frena. --> Semaforo --> COngelar semaforo y esperar a que proceso entre a Finished
+        //Revisar para escucha activa de otra manera.
+        }
+        sem_post(&semaforo_ready_sus); 
+    }
+    else if (!queue_is_empty(lista_new))
+    {
+        sem_wait(&semaforo_new);
+        proceso = queue_peek(lista_sus_ready);
+
+        char* tamnio_proceso = proceso->tamanio;
+        int conexion_memoria = peticion_memoria();
+        enviar_mensaje(tamnio_proceso, conexion_memoria, log_kernel);
+        if (recibir_mensaje(conexion_memoria, log_kernel) == "Ok")
+        {
+            sem_wait(&semaforo_ready);
+            proceso = queue_pop(lista_sus_ready);
+            queue_push(lista_ready, proceso);
+            sem_post(&semaforo_ready);
         }  
         else
         {
@@ -184,29 +233,10 @@ void cambio_estado_ready(struct pcb* proceso)
         //Se frena. --> Semaforo --> COngelar semaforo y esperar a que proceso entre a Finished
         //Revisar para escucha activa de otra manera.
         }
-        sem_post(&semaforo_ready);
+        sem_post(&semaforo_new);
+
     }
 
-    if (!queue_is_empty(lista_new))
-    {
-        sem_wait(&semaforo_ready);
-        proceso = queue_pop(lista_sus_ready);
-        char* tamnio_proceso = proceso->tamanio;
-        int conexion_memoria = peticion_memoria();
-        enviar_mensaje(tamnio_proceso, conexion_memoria, log_kernel);
-        if (recibir_mensaje(conexion_memoria, log_kernel) == "Ok")
-        {
-            queue_pop(lista_sus_ready);
-            queue_push(lista_ready, proceso);
-        }  
-        else
-        {
-        // Casteo el t_queu a T_list y sort moment
-        //Se frena. --> Semaforo --> COngelar semaforo y esperar a que proceso entre a Finished
-        //Revisar para escucha activa de otra manera.
-        }
-        sem_post(&semaforo_ready);
-    }
 
 }
 void cambio_estado_bloqued(struct pcb* proceso)
@@ -216,20 +246,14 @@ void cambio_estado_bloqued(struct pcb* proceso)
 /*
 
 Preguntas / Aclaraciones
-1. Escuchar CPU especifica --> Sis
-3. Memoria siempre tiene todos los procesos? -> Sis
-4. "Productor Consumidor" --> Sis
 5. Semaforo para Finalizar proceso y consultar a memoria --> SIs
 6. Cuando se realiza la planificación a largo plazo y la de Corto plazo? --> Siempre
 7. EStimar tiempo de rafaga y tiempo anterior?? --> estimación inicial en Config
-8. Como devolver la lista de INstrucciones de memoria (1 a 1) o Struct X? --> 1 a 1
-9. Memoria devuelve tamaño para comprar o al reves? --> Kernel a Memoria (Paquete)
 10. Como devolver proceso terminado? --> Lo dejas en lista
 11. Tipo de archivo de pseudocodigo y salto de linea y leer linea? --> formato string
 
 
-CPUs multiples --> lista al entrar al execute --> CPU = cant cpu
-Exectue --> EScucha especificamente a la CPU
+Semaforo Unico por cada estado --> Solo se pueden tocar ahi
 */ 
 
 void planifacion_largo_plazo()
@@ -301,11 +325,10 @@ void* escucha_cpu_especifica(void* proceso_pasado)
             //mandar_proceso de nuevo a ready 
             //revisar para Listas.
             log_info(log_kernel, ""); //Proceso para enviar metricas
-            sem_t semaphore_execute_out;
-            sem_wait(&semaphore_execute_out);
+            sem_wait(&semaforo_execute);
                 list_remove_element ((t_list*)lista_execute, list_find((t_list*)lista_execute, encontrar_proceso(pid_proceso_usado, lista_execute)));
                 proceso->cpu_a_cargo->ocupado=0;
-            sem_post(&semaphore_execute_out); 
+            sem_post(&semaforo_execute); 
             return NULL;
         }
         else if (list_get(paquete_recibido, 0) ==  1) //Init
@@ -314,21 +337,32 @@ void* escucha_cpu_especifica(void* proceso_pasado)
         }
         else if (list_get(paquete_recibido, 0) ==  2) //Dump
         {
-            
+            if (syscall_dump_memory(pid_proceso_usado) == "Ok")
+            {
+                //Bloquear
+            }
+            else
+            {
+                //LO mismo que en Exit. Modificar para que sea unico proceso --> Cambio de Execute a Exit
+            }
         }
         else if (list_get(paquete_recibido, 0) ==  3) //IO
         {
             int existe_io = syscall_io((char*)list_get(paquete_recibido, 3), (int)list_get(paquete_recibido, 4), pid_proceso_usado);
             if (existe_io) //true
             {
-                sem_t semaphore_execute_io;
-                sem_wait(&semaphore_execute_io);
+                sem_wait(&semaforo_execute); 
                 struct pcb* proceso_a_bloquear = list_find((t_list*)lista_execute, encontrar_proceso(pid_proceso_usado, lista_execute));
 
-                cambio_estado_bloqued(proceso_a_bloquear); //hacer función
+                cambio_estado_bloqued(proceso_a_bloquear); //hacer función y meter lo de abajo ahi.
                 list_remove_element ((t_list*)lista_execute, list_find((t_list*)lista_execute, encontrar_proceso(pid_proceso_usado, lista_execute)));
                 proceso->cpu_a_cargo->ocupado=0;
-                sem_post(&semaphore_execute_io); 
+                sem_post(&semaforo_execute); 
+            }
+            else
+            {
+                //LO mismo que en Exit. Modificar para que sea unico proceso --> Cambio de Execute a Exit
+
             }
         }
 }
@@ -396,9 +430,18 @@ int main(int argc, char* argv[]) {
     lista_cpu = list_create();
     lista_io = list_create();
 
-    //Kernel "Core"
+    //Inicalización de semaforos
+    sem_init(&semaforo_ready, 0, 1);
+    sem_init(&semaforo_bloqued, 0, 1);
+    sem_init(&semaforo_execute, 0, 1);
+    sem_init(&semaforo_new, 0, 1);
+    sem_init(&semaforo_ready_sus, 0, 1);
+
+
+    //Kernel "Core" 10/10 Joke
     config_kernel = iniciar_config("kernel");
     log_kernel = log_create("kernel.log", "kernel", false, LOG_LEVEL_INFO);
+    contador_procesos = 0;
     
     char *nombreArchivo = NULL;
     char *tamanioProceso = NULL;
