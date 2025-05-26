@@ -6,11 +6,3 @@ IO IMPRESORA 25000
 INIT_PROC proceso1 256
 DUMP_MEMORY
 EXIT
-opera num texto num
-
-// posibles estructuras para paquete
-
-(int)char[]  int  (int)char[]  int
-
-
-int  int  (int)char[]  int
