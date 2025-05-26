@@ -164,11 +164,14 @@ int main(char* id_cpu)
     int conexion_memoria=conectar_memoria(log_cpu);
     
     
-    char* leido = config_get_string_value(cpu_conf, "REEMPLAZO_CACHE");
+    
+    //char* leido = config_get_string_value(cpu_conf, "REEMPLAZO_CACHE");
+    char* leido="Soy la cpu nueva 2";
 
 
     //enviar_mensaje(leido,conexion_memoria);
-    enviar_mensaje(leido,conexion_memoria, nombre_log_cpu);
+    enviar_mensaje(leido,conexion_memoria, log_cpu);
+    recibir_mensaje(conexion_memoria,log_cpu);
     
     //enviar cpu_id al kernel
     enviar_mensaje(leido,conexion_kernel_dispatch, id_cpu);

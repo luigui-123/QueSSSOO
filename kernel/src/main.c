@@ -14,7 +14,7 @@
 struct pcb
 {
     int PID;
-    int PC;
+    int PC = 0;
     int MT [7];
     int ME [7];
     char* tamanio;
