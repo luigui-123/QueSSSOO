@@ -42,8 +42,8 @@ char* DIR_PSEUDOCODIGO;
 FILE * FILE_PSEUDOCODIGO;
 
 int TAM_MEMORIA_ACTUAL;
-t_list *lista_enviar; 
-t_list *lista_procesos; // VER DICCIONARIO
+//t_list *lista_enviar; 
+t_list *lista_instrucciones; // VER DICCIONARIO Y  CAMBIAR POR LISTA INSTRUCCIONES
 sem_t *consultar_memoria;
 void* MEMORIA_USUARIO;
 
@@ -60,6 +60,14 @@ struct pcb
     int cantLecturas;
     int cantEscrituras;
 };
+
+struct proceso
+{
+    struct pcb;
+    //t_list lista_instrucciones;
+    
+};
+
 
 struct tarea
 {
@@ -232,73 +240,40 @@ int str_to_int(char * txt, int ac){
 }
 
 void leer_pseudo(){
+    //char *dir=strcat(DIR_PSEUDOCODIGO,"pseudocodigo.txt");
     if( (FILE_PSEUDOCODIGO=fopen(DIR_PSEUDOCODIGO,"r")) !=NULL){ // VER COMO ENVIAR MENOS DE 255
         char cont [100];
         //int p,s;
         while (fgets(cont,100,FILE_PSEUDOCODIGO)){
-            /*struct tarea tarea_act;
             
-            p=cont[0]-'0';
-            s=cont[1]-'0';
-            printf("%d",p);
-            switch (p)
-            {
-            case 30: // NOOP
-                tarea_act.id= 0;
-                break;
-            case 39: // WRITE
-                tarea_act.id= 1;
-                tarea_act.num1 = str_to_int(cont,6);
-                printf("%d",tarea_act.num1);
-                break;
-            case 34: // READ
-                
-                break;
-            case 23: // GOTO
-               
-                break;
-            case 25:
-                if (s== 31){}// IO
-                else{}                   // INIT
-                break;
-            case 20: // DUMP MEMORY
-                
-                break;
-            case 21: // EXIT
-               
-                break;
-            default:
-                break;
-            }*/
-            printf("%s\n",cont);  // BIEN
-            char * guarda = malloc(sizeof(char) * 101);
-            memcpy(guarda,cont,sizeof(char)*100); //memcpy
-            memcpy(guarda+100,"\0",sizeof(char));
-            printf("copia %s\n",guarda);
-
-
-
-            list_add(lista_procesos,guarda);
+            //printf("%s",cont);  // BIEN
+            
+            char * guarda = string_duplicate(cont);
+            //char * guarda = malloc(sizeof(char) * 101);
+            //memcpy(guarda,cont,sizeof(char)*100); //memcpy
+            //memcpy(guarda+100,"\0",sizeof(char));
+            //strcat(guarda,"\0");
+            printf(guarda);
+            string_replace(guarda,"\5","\n");
+            list_add(lista_instrucciones,guarda);
         }
+        /*char * aux= list_remove(lista_instrucciones,list_size(lista_instrucciones)-1);
+        char* nuevo = strcat(aux,"\n");
+        list_add(lista_instrucciones,nuevo);
+        free(aux);*/
     }
     fclose(FILE_PSEUDOCODIGO);
     return;
 }
 //mmap
 
-void enviar_lista(){
-    for (int i = 0; i < list_size(lista_procesos); i++)
-    {
-        char mensaje[101];
-        char *posi=list_get(lista_procesos,i);
-        for (int j=0; j < 101; j++)
-        {
-           mensaje[j]=(posi+j);
-        }
-        
-        printf("%s\n",mensaje);  // IMPRIME BASURA
-    }
+void enviar_toda_lista(){
     
+    for (int i = 0; i < list_size(lista_instrucciones); i++)
+    {
+        char *posi=list_get(lista_instrucciones,i);
+        printf (posi);
+    }
     return;
 }
 
@@ -326,14 +301,14 @@ int main(int argc, char* argv[]) {
     // Cargamos las variables globales
     iniciar_config();
     TAM_MEMORIA_ACTUAL=TAM_MEMORIA;
-    lista_procesos=list_create();
+    lista_instrucciones=list_create();
 
     // Creamos el log de memoria
     log_memo = log_create("memoria.log", "memoria", false, LOG_LEVEL);
 
 
-    leer_pseudo(lista_procesos);
-    enviar_lista(lista_procesos);
+    leer_pseudo();
+    enviar_toda_lista();
     //log_info(log_info,("tiene %d",list_size(lista_procesos)));   // NO TIENE NADA?
     //log_info(log_memo,list_remove(lista_procesos,0));
 
@@ -350,6 +325,6 @@ int main(int argc, char* argv[]) {
     config_destroy(nuevo_conf);
     close(socket_conectado);
     log_destroy(log_memo);
-    list_destroy_and_destroy_elements(lista_procesos,NULL);
+    list_destroy_and_destroy_elements(lista_instrucciones,NULL);
     return 0;
 }
