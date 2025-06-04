@@ -131,11 +131,29 @@ void actualizar_tlb(TLB *tlb, int pagina, int marco) {
 }
 
 
-//Calcular numero de pagina y desplzamiento
-void calcular_pagina_y_desplazamiento(unsigned int direccion_logica, int &numero_pagina, int &desplazamiento, int tamanio_pagina)
+
+
+int traducir_direccion (int direccion_logica, int tamanio_pagina, int conectar_memoria)
 {
     numero_pagina = direccion_logica / tamanio_pagina;   // Número de página
-    desplazamiento = direccion_logica % tamanio_pagina;       // Desplazamiento (resto)
+    desplazamiento = direccion_logica % tamanio_pagina;
+    TLB *tlb;
+    inicializar_tlb(tlb);
+    int marco= buscar_tlb(tlb,numero_pagina);
+    if(marco=! -1 ) //TLB hit
+    {
+        return marco * tamanio_pagina + desplazamiento
+    }
+    else //TLb miss
+    {
+        int marco_memoria;
+        send(conectar_memoria,&numero_pagina,sizeof(int),0);
+        recv(conexion_memoria, &marco_memoria}, sizeof(int), MSG_WAITALL);
+        actualizar_tlb(tlb,numero_pagina,marco_memoria);
+        
+        return marco_memoria * tamanio_pagina +desplazamiento;
+    }
+
 }
 
 int main(char* id_cpu) 
@@ -228,7 +246,7 @@ void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, int co
     char *instruccion_separada[] = string_split(instruccion, " ");
     string_to_upper(instruccion_separada[0]);
     if(instruccion_separada[0] == "WRITE"){
-        //int dir_fisica = traducir_direccion(instruccion_separada[1]);
+        int dir_fisica = traducir_direccion(instruccion_separada[1],64,conexion_memoria); //64 es el tamaño de pagina en memoria (asi aparece en su archivo de configuracion)
         int dir_fisica;
         memoriainfo *write;
         write = malloc(sizeof(memoriainfo));
@@ -246,7 +264,7 @@ void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, int co
         proceso->pc = proceso->pc + 1;
 
     } else if(instruccion_separada[0] == "READ"){
-        //int dir_fisica = traducir_direccion(instruccion_separada[1]);
+        int dir_fisica = traducir_direccion(instruccion_separada[1],64,conexion_memoria);
         int dir_fisica;
         memoriainfo *read;
         read = malloc(sizeof(memoriainfo));
