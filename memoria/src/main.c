@@ -94,7 +94,7 @@ void iniciar_config()
     char* nivel_log=config_get_string_value(nuevo_conf, "LOG_LEVEL");
     LOG_LEVEL=log_level_from_string(nivel_log);
     DUMP_PATH= config_get_string_value(nuevo_conf, "DUMP_PATH");
-    DIR_PSEUDOCODIGO=config_get_string_value(nuevo_conf, "PATH_PSEUDOCODIGO");
+    DIR_PSEUDOCODIGO=config_get_string_value(nuevo_conf, "PATH_INSTRUCCIONES");
 
     //lista_procesos =list_create();
 
@@ -240,29 +240,29 @@ int str_to_int(char * txt, int ac){
 }
 
 void leer_pseudo(){
-    //char *dir=strcat(DIR_PSEUDOCODIGO,"pseudocodigo.txt");
-    if( (FILE_PSEUDOCODIGO=fopen(DIR_PSEUDOCODIGO,"r")) !=NULL){ // VER COMO ENVIAR MENOS DE 255
-        char cont [100];
-        //int p,s;
-        while (fgets(cont,100,FILE_PSEUDOCODIGO)){
-            
-            //printf("%s",cont);  // BIEN
-            
+    int tam_dir=1024;
+    char * dir= malloc(tam_dir);
+    memset(dir,0,tam_dir);
+    strcat(dir,DIR_PSEUDOCODIGO);
+
+    // Completa la ruta al archivo
+    strcat(dir,"pseudocodigo.txt");
+    
+    if( (FILE_PSEUDOCODIGO=fopen(dir,"r")) !=NULL){ 
+        char cont [256];
+        
+        // Obtiene lineas hasta el final de archivo
+        while (fgets(cont,256,FILE_PSEUDOCODIGO)){
+
+            // Pone la linea en un puntero
             char * guarda = string_duplicate(cont);
-            //char * guarda = malloc(sizeof(char) * 101);
-            //memcpy(guarda,cont,sizeof(char)*100); //memcpy
-            //memcpy(guarda+100,"\0",sizeof(char));
-            //strcat(guarda,"\0");
-            printf(guarda);
-            string_replace(guarda,"\5","\n");
+            
+            // Aniade a la lista la linea de turno
             list_add(lista_instrucciones,guarda);
         }
-        /*char * aux= list_remove(lista_instrucciones,list_size(lista_instrucciones)-1);
-        char* nuevo = strcat(aux,"\n");
-        list_add(lista_instrucciones,nuevo);
-        free(aux);*/
+        fclose(FILE_PSEUDOCODIGO);
     }
-    fclose(FILE_PSEUDOCODIGO);
+    free(dir);
     return;
 }
 //mmap
@@ -271,6 +271,7 @@ void enviar_toda_lista(){
     
     for (int i = 0; i < list_size(lista_instrucciones); i++)
     {
+        // Trae el elemento i de la lista (funciona como IP)
         char *posi=list_get(lista_instrucciones,i);
         printf (posi);
     }
@@ -296,7 +297,7 @@ void* gestion_conexiones(){
 int main(int argc, char* argv[]) {
 
     // Crea un hilo que carga las variables globales. El sistema debe esperar que termine
-    consultar_memoria=sem_open("SEM_MOD_MEMO", O_CREAT | O_EXCL, S_IRUSR | S_IRUSR, 0); 
+    //consultar_memoria=sem_open("SEM_MOD_MEMO", O_CREAT | O_EXCL, S_IRUSR | S_IRUSR, 0); 
 
     // Cargamos las variables globales
     iniciar_config();
@@ -320,11 +321,12 @@ int main(int argc, char* argv[]) {
     pthread_create(&servidor,NULL,gestion_conexiones,NULL);
     // Esperamos a que el hilo termine, aunque nunca lo haga
     pthread_join(servidor,NULL);
+    //pthread_detach(servidor);
 
     // Limpieza general, que no realiza
     config_destroy(nuevo_conf);
     close(socket_conectado);
     log_destroy(log_memo);
-    list_destroy_and_destroy_elements(lista_instrucciones,NULL);
+    list_destroy_and_destroy_elements(lista_instrucciones,free);
     return 0;
 }
