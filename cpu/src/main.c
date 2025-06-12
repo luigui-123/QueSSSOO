@@ -29,6 +29,9 @@ typedef struct
     int direccion;
 } memoriainfo;
 
+t_list *recibir_procesos(int, t_log*);
+char *obtener_instruccion(cpuinfo*, int, t_log *);
+
 t_config* iniciar_config()
 {
 	t_config* nuevo_config = config_create("cpu.conf");
@@ -197,14 +200,15 @@ int main(char* id_cpu)
 
     //while (cpu conectada){
         proceso = recibir_procesos(conexion_kernel_dispatch, id_cpu);
+        interrupcion = false;
         cpuinfo *procesocpu;
         procesocpu = malloc(sizeof(cpuinfo));
-        procesocpu->tipo = 0;
+        procesocpu->tipo = 0; //Para que memoria sepa que le voy a pedir una instruccion
         procesocpu->pid = list_get(proceso, 0);
         procesocpu->pc = list_get(proceso, 1);
         do{
             instruccion = obtener_instruccion(procesocpu, conexion_memoria, log_cpu);
-            decodear_y_ejecutar_instruccion(instruccion, procesocpu, conexion_memoria, conexion_kernel_dispatch, log_cpu);
+            decodear_y_ejecutar_instruccion(instruccion, procesocpu, conexion_memoria, conexion_kernel_dispatch, log_cpu, &interrupcion);
             //interrupcion = check_interrupt()
         }while(!interrupcion);
         t_paquete *paquete = crear_paquete();
@@ -241,9 +245,9 @@ char *obtener_instruccion(cpuinfo *procesocpu, int conexion_memoria, t_log *log_
     return instruccion;
 }
 
-void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, int conexion_memoria, int conexion_kernel, t_log *log_cpu)
+void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, int conexion_memoria, int conexion_kernel, t_log *log_cpu, bool *interrupcion)
 {
-    char *instruccion_separada[] = string_split(instruccion, " ");
+    char **instruccion_separada = string_split(instruccion, " ");
     string_to_upper(instruccion_separada[0]);
     if(instruccion_separada[0] == "WRITE"){
         int dir_fisica = traducir_direccion(instruccion_separada[1],64,conexion_memoria); //64 es el tamaño de pagina en memoria (asi aparece en su archivo de configuracion)
@@ -301,6 +305,7 @@ void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, int co
         enviar_paquete(paquete, conexion_kernel, log_cpu);
         free(io);
         proceso->pc = proceso->pc + 1;
+        *interrupcion = true;
 
     } else if(instruccion_separada[0] == "INIT_PROC"){
         syscallinfo *init;
@@ -330,6 +335,7 @@ void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, int co
         enviar_paquete(paquete, conexion_kernel, log_cpu);
         free(dump);
         proceso->pc = proceso->pc + 1;
+        *interrupcion = true;
 
     } else if(instruccion_separada[0] == "EXIT"){
         syscallinfo *exit;
@@ -343,5 +349,5 @@ void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, int co
         free(exit);
     }
 
-    return 0;
+    return;
 }
