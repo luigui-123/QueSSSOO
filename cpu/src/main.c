@@ -8,6 +8,12 @@
 #include <unistd.h>
 #include <stdbool.h>
 
+//algunas variables globales
+#define TAMANIO_PAGINA 64
+#define ENTRADAS_POR_TABLA 4
+int ENTRADAS_CACHE =  config_get_int_value("cpu_conf", "ENTRADAS_CACHE");
+int RETARDO_CACHE = config_get_int_value("cpu_conf", "RETARDO_CACHE");
+int  ENTRADAS_TLB = config_get_int_value ("cpu.conf","ENTRADAS_TLB");
 typedef struct
 {
     int tipo;
@@ -29,6 +35,20 @@ typedef struct
     int direccion;
 } memoriainfo;
 
+typedef struct {
+    int nivel_1;
+    int nivel_2;
+    int nivel_3;
+    int ptrb;   //seria el pid 
+}DLinfo;
+
+typedef struct {
+    int direccion_fisica;
+    char *contenido;
+}PaginaCache;
+
+
+//-------------------------conexiones--------------------------------
 t_config* iniciar_config()
 {
 	t_config* nuevo_config = config_create("cpu.conf");
@@ -59,7 +79,8 @@ int conectar_memoria(t_log *log_cpu)
     return conexion_memoria;
 }
 
-int  tamanio_tlb = config_get_int_value ("cpu.conf","ENTRADAS_TLB");
+//---------------------------------------TLB----------------------------------------
+
 // Estructura para una entrada de la TLB
 typedef struct {
     int pagina;
@@ -70,13 +91,13 @@ typedef struct {
 
 // Estructura para simular la TLB
 typedef struct {
-    TLBEntrada *entrada[tamanio_tlb];
+    TLBEntrada *entrada[ENTRADAS_TLB];
     int contador_acceso; // Contador global para registrar accesos
 } TLB;
 
 // Inicializar la TLB
 void inicializar_tlb(TLB *tlb) {
-    for (int i = 0; i < tamanio_tlb; i++) {
+    for (int i = 0; i < ENTRADAS_TLB; i++) {
         tlb->entrada[i].validez = false; // Todas las entradas comienzan como inválidas
         tlb->entrada[i].menos_usado = -1; // Sin historial de uso
     }
@@ -85,7 +106,7 @@ void inicializar_tlb(TLB *tlb) {
 
 // Buscar en la TLB
 int buscar_tlb(TLB *tlb, int pagina) {
-    for (int i = 0; i < tamanio_tlb; i++) {
+    for (int i = 0; i < ENTRADAS_TLB; i++) {
         if (tlb->entrada[i].validez && tlb->entrada[i].pagina == pagina) {
             // Actualiza el registro de último uso
             tlb->entrada[i].menos_usado = tlb->contador_acceso++;
@@ -102,7 +123,7 @@ int buscar_entrada_lru(TLB *tlb) {
     int indice_lru = -1;
     int min_menos_usado = __INT_MAX__; // Un valor inicial alto
 
-    for (int i = 0; i < tamanio_tlb; i++) {
+    for (int i = 0; i < ENTRADAS_TLB; i++) {
         if (!tlb->entrada[i].validez) {
             // Si encontramos una entrada inválida, podemos usarla directamente
             return i;
@@ -131,28 +152,178 @@ void actualizar_tlb(TLB *tlb, int pagina, int marco) {
 }
 
 
+//-----------------------------------Cache-----------------------------------------
+
+//cache de paginas
+typedef struct {
+    int numero_pagina;
+    int marco;
+    bool modificado;
+    char contenido[TAMANIO_PAGINA];
+    int referencia_bit; // 0 or 1, used by the Clock algorithm
+} Pagina;
+
+typedef struct {
+    Pagina paginas[ENTRADAS_CACHE];
+    int puntero; // Points to the current position of the clock puntero
+} Cache;
+
+// Inicializar cache
+void inicializar_cache(Cache *cache) {
+    for (int i = 0; i < ENTRADAS_CACHE; i++) {
+        cache->paginas[i].numero_pagina = -1; // -1 indicates an empty slot
+        cache->paginas[i].marco = -1;
+        cache->paginas[i].modificado = false;
+        cache->paginas[i].referencia_bit = 0;
+        memset(cache->paginas[i].contenido, 0, TAMANIO_PAGINA);
+    }
+    cache->puntero = 0;
+}
+
+int encontrar_pagina_cache(Cache *cache, int numero_pagina) {
+    for (int i = 0; i < ENTRADAS_CACHE; i++) {
+        if (cache->paginas[i].numero_pagina == numero_pagina) {
+            return i;
+        }
+    }
+    return -1;
+}
 
 
-int traducir_direccion (int direccion_logica, int tamanio_pagina, int conectar_memoria)
+char* acceder_contenido_cache (Cache*cache,int numero_pagina)
 {
-    numero_pagina = direccion_logica / tamanio_pagina;   // Número de página
-    desplazamiento = direccion_logica % tamanio_pagina;
-    TLB *tlb;
-    inicializar_tlb(tlb);
+    int indice = encontrar_pagina_cache(cache,numero_pagina);
+    char*contenido = cache->paginas[indice].contenido;
+    return contenido;
+}
+
+
+
+// Search for a page in the cache. Returns its indice or -1 if not found.
+int buscar_cache(Cache *cache, int numero_pagina) {
+    for (int i = 0; i < ENTRADAS_CACHE; i++) {
+        if (cache->paginas[i].numero_pagina == numero_pagina) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+// Add or update a page in the cache using the Clock algorithm
+
+void escribir_cache(Cache *cache, int numero_pagina, const char *contenido) {
+    int indice = buscar_cache(cache, numero_pagina);
+
+    if (indice != -1) { 
+        
+        printf("Pagina %d encontrada en cache. Actualizando contenido.\n", numero_pagina);
+        strncpy(cache->paginas[indice].contenido, contenido, TAMANIO_PAGINA);
+        cache->paginas[indice].referencia_bit = 1; // Set reference bit
+        return;
+
+    }
+}    
+
+void actualizar_cache (Cache *cache, int numero_pagina, const char *contenido,int conexion_memoria,t_log log_cpu)
+{
+  while (1) {
+        if (cache->paginas[cache->puntero].referencia_bit == 0) {
+            //Mandar los cambios de paginas en cache en memoria si hay modficaciones
+            if(cache->paginas[cache->puntero].modificado=true)
+            {
+                PaginaCache *cambio_cache=malloc(sizeof(PaginaCache));
+                cambio_cache->contenido=cache->paginas[cache->puntero].contenido;
+                cambio_cache->direccion_fisica=cache->paginas[cache->puntero].marco * TAMANIO_PAGINA;
+                t_paquete paquete=crear_paquete();
+                agregar_a_paquete(paquete,cambio_cache,sizeof(PaginaCache));
+                enviar_paquete(paquete,conexion_memoria,log_cpu);
+                free(cambio_cache);
+            }
+
+            // Reemplazar la pagina
+            printf("Reemplazando pagina %d con pagina %d.\n", cache->paginas[cache->puntero].numero_pagina, numero_pagina);
+            cache->paginas[cache->puntero].numero_pagina = numero_pagina;
+            strncpy(cache->paginas[cache->puntero].contenido, contenido, TAMANIO_PAGINA);
+            cache->paginas[cache->puntero].referencia_bit = 1; // Set reference bit
+            cache->puntero = (cache->puntero + 1) % ENTRADAS_CACHE; // Move the clock puntero
+            break;
+        } else {
+            // Unset the reference bit and move the clock puntero
+            cache->paginas[cache->puntero].referencia_bit = 0;
+            cache->puntero = (cache->puntero + 1) % ENTRADAS_CACHE;
+        }
+        }   
+}    
+
+bool se_modifico_cache (Cache*cache)
+{
+    for(int i=0;i<ENTRADAS_CACHE;i++)
+    {
+        if (cache->paginas[i].modificado = true)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+void enviar_cambios_memoria (Cache *cache,int conexion_memoria,t_log log_cpu)
+{
+    PaginaCache* cambios_cache=malloc(sizeof(PaginaCache));
+    t_paquete* paquete = crear_paquete();
+    for(int i=0;i<ENTRADAS_CACHE;i++)
+    {
+        if(cache->paginas[i].modificado=true)
+        {
+            cambios_cache->direccion_fisica = cache->paginas[i].marco*TAMANIO_PAGINA;
+            cambios_cache->contenido = cache->paginas[i].contenido;
+            cache->paginas[i].modificado =  false;
+            agregar_a_paquete(paquete,cambios_cache,sizeof(PaginaCache));
+        }
+    }
+
+    enviar_paquete(paquete,conexion_memoria,log_cpu);
+    free(cambios_cache);
+
+}    
+void vaciar_cache (Cache*cache)
+{
+
+}
+
+
+int traducir_direccion (int direccion_logica, int conexion_memoria,cpuinfo *proceso, TLB*tlb, Cache*cache)
+{
+    int numero_pagina = direccion_logica / TAMANIO_PAGINA;  
+    int desplazamiento = direccion_logica % TAMANIO_PAGINA;
+    int n1= (numero_pagina  / ENTRADAS_POR_TABLA ^ (2)) % ENTRADAS_POR_TABLA;
+    int n2= (numero_pagina  / ENTRADAS_POR_TABLA ^ (1)) % ENTRADAS_POR_TABLA;
+    int n3= (numero_pagina  / ENTRADAS_POR_TABLA ^ (0)) % ENTRADAS_POR_TABLA;
+     
     int marco= buscar_tlb(tlb,numero_pagina);
     if(marco=! -1 ) //TLB hit
     {
-        return marco * tamanio_pagina + desplazamiento
+        return marco * TAMANIO_PAGINA + desplazamiento;
     }
-    else //TLb miss
+    else 
     {
+        DLinfo * DL = malloc (sizeof(DLinfo));
+        DL ->nivel_1=n1;
+        DL ->nivel_2=n2;
+        DL ->nivel_3=n3;
+        DL ->ptrb =proceso->pid;
+
+        t_paquete *paquete = crear_paquete();
+        agregar_a_paquete(paquete, DL, sizeof(DLinfo));
+        enviar_paquete(paquete, conexion_memoria, log_cpu);
+
         int marco_memoria;
-        send(conectar_memoria,&numero_pagina,sizeof(int),0);
-        recv(conexion_memoria, &marco_memoria}, sizeof(int), MSG_WAITALL);
+        recv (conexion_memoria,&marco_memoria, sizeof(int), MSG_WAITALL);
+
         actualizar_tlb(tlb,numero_pagina,marco_memoria);
         
-        return marco_memoria * tamanio_pagina +desplazamiento;
-    }
+        return marco_memoria * TAMANIO_PAGINA +desplazamiento;
+      } 
+    
 
 }
 
@@ -166,7 +337,8 @@ int main(char* id_cpu)
 
     t_config*cpu_conf = iniciar_config(); 
 
-
+    TLB*tlb;
+    Cache *cache;
 
     // Inicia conexion_kernel_dispatch con Kernel dispatch
     int conexion_kernel_dispatch = conectar_kernel_dispatch(log_cpu);
@@ -211,6 +383,12 @@ int main(char* id_cpu)
         agregar_a_paquete(paquete, procesocpu, sizeof(cpuinfo));
         enviar_paquete(paquete, conectar_kernel_dispatch, log_cpu);
         free(procesocpu);
+        //En caso de desalojo enviar cambios de la cache a memoria si hubo
+        if(se_modifico_cache(cache))
+        {
+           enviar_cambios_memoria(cache,conexion_memoria,log_cpu); 
+        }
+        
     //}
 
     // Limpieza general
@@ -241,46 +419,80 @@ char *obtener_instruccion(cpuinfo *procesocpu, int conexion_memoria, t_log *log_
     return instruccion;
 }
 
-void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, int conexion_memoria, int conexion_kernel, t_log *log_cpu)
+void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, int conexion_memoria, int conexion_kernel, t_log *log_cpu,Cache *cache,TLB*tlb)
 {
+    int numero_pagina;
     char *instruccion_separada[] = string_split(instruccion, " ");
     string_to_upper(instruccion_separada[0]);
     if(instruccion_separada[0] == "WRITE"){
-        int dir_fisica = traducir_direccion(instruccion_separada[1],64,conexion_memoria); //64 es el tamaño de pagina en memoria (asi aparece en su archivo de configuracion)
-        int dir_fisica;
-        memoriainfo *write;
-        write = malloc(sizeof(memoriainfo));
-        write->tipo = 2;
-        write->pid = proceso->pid;
-        write->direccion = dir_fisica;
-        char *dato = instruccion_separada[2];
-        int longitud = string_length(dato);
-        t_paquete *paquete = crear_paquete();
-        agregar_a_paquete(paquete, write, sizeof(memoriainfo));
-        agregar_a_paquete(paquete, dato, (longitud+1)*sizeof(char));
-        enviar_paquete(paquete, conexion_memoria, log_cpu);
-        free(write);
-        recibir_mensaje(conexion_memoria, log_cpu); //Recibo el OK de memoria
-        proceso->pc = proceso->pc + 1;
+        numero_pagina = atoi(instruccion[1])/TAMANIO_PAGINA;
+
+        //Primero vemos si esa pagina esta en cache
+
+        if(buscar_cache(cache, numero_pagina)!=-1)
+        {
+            usleep(RETARDO_CACHE*1000);
+            escribir_cache(cache,numero_pagina,instruccion_separada[2]);
+            proceso->pc = proceso->pc + 1;
+        }
+        else{
+
+            //sino esta en cache hacemos la traduccion y la buscamos en memoria
+
+            int dir_fisica = traducir_direccion(instruccion_separada[1],64,conexion_memoria); //64 es el tamaño de pagina en memoria (asi aparece en su archivo de configuracion)
+            memoriainfo *write;
+            write = malloc(sizeof(memoriainfo));
+            write->tipo = 2;
+            write->pid = proceso->pid;
+            write->direccion = dir_fisica;
+            char *dato = instruccion_separada[2];            
+            int longitud = string_length(dato);
+            t_paquete *paquete = crear_paquete();
+            agregar_a_paquete(paquete, write, sizeof(memoriainfo));
+            agregar_a_paquete(paquete, dato, (longitud+1)*sizeof(char));
+            enviar_paquete(paquete, conexion_memoria, log_cpu);
+            free(write);
+            recibir_mensaje(conexion_memoria, log_cpu); //Recibo el OK de memoria
+            proceso->pc = proceso->pc + 1;
+        
+            actualizar_cache(cache, numero_pagina,instruccion_separada[2]);
+
+        }
+        
 
     } else if(instruccion_separada[0] == "READ"){
-        int dir_fisica = traducir_direccion(instruccion_separada[1],64,conexion_memoria);
-        int dir_fisica;
-        memoriainfo *read;
-        read = malloc(sizeof(memoriainfo));
-        read->tipo = 1;
-        read->pid = proceso->pid;
-        read->direccion = dir_fisica;
-        int tamanio = atoi(instruccion_separada[2]);
-        t_paquete *paquete = crear_paquete();
-        agregar_a_paquete(paquete, read, sizeof(memoriainfo));
-        agregar_a_paquete(paquete, tamanio, sizeof(int));
-        enviar_paquete(paquete, conexion_memoria, log_cpu);
-        free(read);
-        char *leido = recibir_mensaje(conexion_memoria, log_cpu);
-        printf(leido);
-        log_info(log_cpu, leido);
-        proceso->pc = proceso->pc + 1;
+        numero_pagina = atoi(instruccion[1])/TAMANIO_PAGINA;
+        if(buscar_cache(cache,numero_pagina)!=-1)
+        {
+            usleep(RETARDO_CACHE*1000);
+            char *leido = acceder_contenido_cache (cache, numero_pagina);
+            printf(leido);
+            proceso->pc = proceso->pc + 1;
+
+            //falta lo del logueo
+
+        }else{
+
+            int dir_fisica = traducir_direccion(instruccion_separada[1],64,conexion_memoria);
+            memoriainfo *read;
+            read = malloc(sizeof(memoriainfo));
+            read->tipo = 1;
+            read->pid = proceso->pid;
+            read->direccion = dir_fisica;
+            int tamanio = atoi(instruccion_separada[2]);
+            t_paquete *paquete = crear_paquete();
+            agregar_a_paquete(paquete, read, sizeof(memoriainfo));
+            agregar_a_paquete(paquete, tamanio, sizeof(int));
+            enviar_paquete(paquete, conexion_memoria, log_cpu);
+            free(read);
+            char *leido = recibir_mensaje(conexion_memoria, log_cpu);
+            printf(leido);
+            log_info(log_cpu, leido);
+            proceso->pc = proceso->pc + 1;
+            actualizar_cache(cache, numero_pagina,leido);
+
+        }
+        
 
     } else if(instruccion_separada[0] == "GOTO"){
         proceso->pc = atoi(instruccion_separada[1]);
