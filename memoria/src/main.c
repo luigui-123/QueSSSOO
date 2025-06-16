@@ -1,10 +1,11 @@
-#include <utils/hello.h>
+
 #include <commons/log.h>
 #include <commons/config.h>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <unistd.h>
 #include <commons/collections/list.h>
+#include <commons/collections/dictionary.h>
 #include <commons/string.h>
 #include <pthread.h>
 #include <semaphore.h>
@@ -14,6 +15,14 @@
 #include <stdlib.h>
 #include <commons/txt.h>
 #include <string.h>
+
+#include <utils/hello.h>
+
+#include <commons/collections/queue.h>
+
+
+#include <commons/temporal.h>
+
 #define PROCESO_NUEVO 0
 #define SUSPENDER 1
 #define DES_SUSPENDER 2
@@ -24,10 +33,10 @@
 #define ACTUALIZAR_PAG 7
 #define MEMORY_DUMP 8
 
-// Globales
+// Globales Obligatorias
 t_config* nuevo_conf;
 t_log *log_memo;
-int socket_conectado;
+int *socket_conectado;
 char*  PUERTO_ESCUCHA;
 int TAM_MEMORIA;
 int TAM_PAGINA;
@@ -40,18 +49,32 @@ t_log_level LOG_LEVEL;
 char* DUMP_PATH;
 char* DIR_PSEUDOCODIGO;
 FILE * FILE_PSEUDOCODIGO;
-
 int TAM_MEMORIA_ACTUAL;
+//t_dictionary * lista_procesos;
+t_list *lista_procesos;
+
 //t_list *lista_enviar; 
-t_list *lista_instrucciones; // VER DICCIONARIO Y  CAMBIAR POR LISTA INSTRUCCIONES
+// VER DICCIONARIO Y  CAMBIAR POR LISTA INSTRUCCIONES
 sem_t *consultar_memoria;
 void* MEMORIA_USUARIO;
+                        //
+                            //
+                                //
+                                //
+                                //
+                                // dato[64] todos los procesos pueden acceder a todas la memoria o como se le asigna una pag concreta?
+                            //
+                            //
+                            //
+                        //
+                        //
+                        //
 
 // Estructuras
-struct pcb
+struct pcb // proceso
 {
     int PID;
-    int PC;
+    //int PC;                   //Es el ID de la lista
     int tamanio;
     int accesoTablaPag;
     int instruccionSolicitada;
@@ -59,22 +82,9 @@ struct pcb
     int subidasMemo;
     int cantLecturas;
     int cantEscrituras;
+    t_list *lista_instrucciones;
+    //lista de pag asigna
 };
-
-struct proceso
-{
-    struct pcb;
-    //t_list lista_instrucciones;
-    
-};
-
-
-struct tarea
-{
-    int id, num1, tam_texto, num2;
-    char* texto;
-};
-
 
 // Funciones que funcionan
 
@@ -117,112 +127,9 @@ void iniciar_config()
     return;
 }*/
 
-
-
-// FUNCIONES PARA VER
-
-void* ingresar_conexion(void* conexion)
-{
-    /*
-    // Transformamos la conexion a INT
-    int aux=(int*) conexion;
-
-    // Bloqueamos el proceso para ver si el proceso actual puede almacenarse en la memoria
-    sem_wait(consultar_memoria);
-
-    // Recibimos el buffer
-    int pro[4] = recibir_mensaje(aux,log_memo); //CAMBIAR RECIBIR MENSAJE (instruccion, PID, PC y tamanio)
-
-    //int cod_operacion = obtener_operacion(mensaje);
-    //struct proceso proceso = recibir_proceso(mensaje); // El tamanio, PID y PC
-
-    struct pcb proceso;
-
-    switch (pro[0])
-    {
-    case (PROCESO_NUEVO): // TOCA SWAP Y LISTA DE PROCESOS
-    case (DES_SUSPENDER): // TOCA SWAP Y LISTA DE PROCESOS
-        // Modificar memoria si el proceso puede entrar a memoria
-        if(pro[3] <= TAM_MEMORIA_ACTUAL){
-            
-            if(pro[0]==DES_SUSPENDER){
-                pthread_t cargar_SWAP;
-                pthread_create(&cargar_SWAP,leer_SWAP,(void*)pro[1]); // LEE Y RETORNA EL PROCESO COMPLETO
-                pthread_join(cargar_SWAP,&proceso);
-                proceso.bajadaSWAP++;
-                proceso.subidasMemo++;
-                enviar_mensaje("OK",conexion,log_memo); //CAMBIAR ENVIAR MENSAJE
-                list_add(lista_procesos,(void*) proceso);
-            }
-            else if(pro[0]==PROCESO_NUEVO){
-                proceso.tamanio=pro[3];
-                proceso.subidasMemo=1;
-                proceso.accesoTablaPag=0;
-                proceso.instruccionSolicitada=0;
-                proceso.cantEscrituras=0;
-                proceso.cantLecturas=0;
-                enviar_mensaje("OK",conexion,log_memo); //CAMBIAR ENVIAR MENSAJE
-                list_add(lista_procesos,(void*) proceso);
-                // QUE ES MARCO ASIGNADO ?
-            }
-        }
-        else {
-            char* mensaje="no hay memoria";
-            enviar_mensaje(mensaje,conexion,log_memo);
-        }
-        break;
-    
-    case (SUSPENDER): // TOCA SWAP Y LISTA
-        // ENCONTRAR Y SACAR PROCESO DE LISTA
-        proceso=buscar_proceso(pro[1]);  // LO BUSCA Y SACA
-        TAM_MEMORIA_ACTUAL=TAM_MEMORIA_ACTUAL+proceso.tamanio;
-        pthread_t escribir_SWAP;
-        pthread_create(&escribir_SWAP,guardar_SWAP,(void *) proceso); // HACER CODIGO DE GUARDAR BINARIO
-        pthread_detach(escribir_SWAP);
-
-        // QUE ES INFO NECESARIA?
-        break;
-
-    case (FINALIZAR): // TOCA LISTA Y SWAP
-        // ENCONTRAR UN PROCESO Y SACARLO DE LA LISTA
-        // CODIGO PARA BUSCARLO EN SWAP Y LIBERAR SUS ENTRADAS
-        // Escribirlo en log
-        log_trace(log_memo, "Ha finalizado el proceso %d con %d accesos a la tabla de paginas, %d instrucciones solicitadas, %d bajadas a SWAP, %d subidas a memoria, %d lecturas en memoria y %d escrituras en pagina",proceso.accesoTablaPag,proceso.instruccionSolicitada,proceso.bajadaSWAP,proceso.subidasMemo,proceso.cantLecturas,proceso.cantEscrituras);
-        // cOMO LIBERAR ENTRADAS DE PROCESO?
-        break;
-
-    case (ACCEDER_TABLA): 
-        
-        // ????
-
-        break;
-
-    case (ACCEDER_MEMO_USUARIO): // TOCA MEMORIA USUARIO
-        
-        break;
-
-    case (LEER_PAG): // TOCA PSEUSDOCODIGO
-        suspender_proceso(proceso);
-        break;
-
-    case (ACTUALIZAR_PAG): // TOCA MEMORIA DE USUARIO ?
-        suspender_proceso(proceso);
-        break;
-
-    case (MEMORY_DUMP): // TOCA UN ARCHIVO PROPIO Y EL VALOR DE MEMORIA
-        FILE * dump;
-        char* titulo = DUMP_PATH;
-        titulo[string_length(titulo)+1]=string_itoa(pro[1]);
-        if (dump=fopen(titulo,"w")){
-
-        }
-        free (titulo);
-        break;
-    }*/
-
-    // Permitimos el paso de la siguiente instruccion
-    sem_post(consultar_memoria);
-    return;
+void* ingresar_conexion(void * socket_void){
+    int *socket = (int *) socket_void;
+    return NULL;
 }
 
 int str_to_int(char * txt, int ac){
@@ -240,6 +147,18 @@ int str_to_int(char * txt, int ac){
 }
 
 void leer_pseudo(){
+    struct pcb* proceso = malloc(sizeof(struct pcb));
+    if (!proceso) abort();
+    proceso->PID=1;
+    proceso->lista_instrucciones=list_create();
+    proceso->tamanio = 0;
+    proceso->accesoTablaPag = 0;
+    proceso->instruccionSolicitada = 0;
+    proceso->bajadaSWAP = 0;
+    proceso->subidasMemo = 1;
+    proceso->cantLecturas = 0;
+    proceso->cantEscrituras =0;
+
     int tam_dir=1024;
     char * dir= malloc(tam_dir);
     memset(dir,0,tam_dir);
@@ -253,27 +172,27 @@ void leer_pseudo(){
         
         // Obtiene lineas hasta el final de archivo
         while (fgets(cont,256,FILE_PSEUDOCODIGO)){
-
-            // Pone la linea en un puntero
-            char * guarda = string_duplicate(cont);
-            
-            // Aniade a la lista la linea de turno
-            list_add(lista_instrucciones,guarda);
+            char * guarda = string_duplicate(cont); // Pone la linea en un puntero
+            list_add(proceso->lista_instrucciones,guarda); // Aniade a la lista la linea de turno
         }
         fclose(FILE_PSEUDOCODIGO);
+        //dictionary_put(lista_procesos,"1", (void*) &proceso); // Aniade a diccionario, "1" seria el PID
+        list_add(lista_procesos,proceso);
     }
     free(dir);
     return;
 }
-//mmap
-
-void enviar_toda_lista(){
-    
-    for (int i = 0; i < list_size(lista_instrucciones); i++)
+void enviar_toda_lista(t_list* lista){ // Funciona la lectura de solo la lista, falla al implementar un proceso
+    //struct pcb proceso= pro;
+    //for (int i = 0; i < list_size(proceso.lista_instrucciones); i++)
+    for (int i = 0; i < list_size(lista); i++)
     {
-        // Trae el elemento i de la lista (funciona como IP)
-        char *posi=list_get(lista_instrucciones,i);
-        printf (posi);
+        // Trae el elemento i de la lista (funciona como PC)
+        //char *posi=list_get(proceso.lista_instrucciones,i);
+        log_trace(log_memo,"escribir \n");
+        log_trace(log_memo,"Guardar %s\n",(char *)list_get(lista,i));
+        //char *posi = list_get(lista,i);
+        //printf (posi);
     }
     return;
 }
@@ -281,17 +200,33 @@ void enviar_toda_lista(){
 void* gestion_conexiones(){
     // Crea socket y espera
     int socket_escucha = iniciar_modulo(PUERTO_ESCUCHA, log_memo);
+    socket_conectado = malloc(sizeof(int));
     while(1){
         
         // Recibe un cliente y crea un hilo personalizado para la conexión
-        socket_conectado = establecer_conexion(socket_escucha, log_memo);
+        *socket_conectado = establecer_conexion(socket_escucha, log_memo);
         pthread_t manejo_servidor;
         pthread_create(&manejo_servidor,NULL,ingresar_conexion,(void*) socket_conectado);
         pthread_detach(manejo_servidor);
         
     }
     close(socket_escucha);
+    return NULL;
+}
+
+void destruir_proceso(void *pro){
+    struct pcb *proceso= (struct pcb *) pro;
+    list_destroy_and_destroy_elements(proceso->lista_instrucciones,free);
+    free(proceso);
     return;
+}
+
+struct pcb* find_by_PID(t_list* lista, int i) {
+    bool PID_contains(void* ptr) {
+        struct pcb* proceso = (struct pcb*) ptr;
+        return proceso->PID == i;
+    }
+    return list_find(lista, PID_contains);
 }
 
 int main(int argc, char* argv[]) {
@@ -302,31 +237,31 @@ int main(int argc, char* argv[]) {
     // Cargamos las variables globales
     iniciar_config();
     TAM_MEMORIA_ACTUAL=TAM_MEMORIA;
-    lista_instrucciones=list_create();
+    lista_procesos=list_create();
 
     // Creamos el log de memoria
     log_memo = log_create("memoria.log", "memoria", false, LOG_LEVEL);
 
-
     leer_pseudo();
-    enviar_toda_lista();
-    //log_info(log_info,("tiene %d",list_size(lista_procesos)));   // NO TIENE NADA?
-    //log_info(log_memo,list_remove(lista_procesos,0));
+    struct pcb *proceso=find_by_PID(lista_procesos,1);
 
-
-
+    t_list *lista = proceso->lista_instrucciones;
+    enviar_toda_lista(lista);
 
     // Creamos el hilo que crea el servidor
     pthread_t servidor;
     pthread_create(&servidor,NULL,gestion_conexiones,NULL);
+    
     // Esperamos a que el hilo termine, aunque nunca lo haga
     pthread_join(servidor,NULL);
     //pthread_detach(servidor);
 
     // Limpieza general, que no realiza
+    list_destroy_and_destroy_elements(lista_procesos,destruir_proceso);
     config_destroy(nuevo_conf);
-    close(socket_conectado);
+    if (socket_conectado) close(*socket_conectado);
     log_destroy(log_memo);
-    list_destroy_and_destroy_elements(lista_instrucciones,free);
+    //list_destroy_and_destroy_elements(lista_instrucciones,free);
+    
     return 0;
 }
