@@ -44,31 +44,17 @@ int ENTRADAS_POR_TABLA;
 int CANTIDAD_NIVELES;
 int RETARDO_MEMORIA;
 char* PATH_SWAPFILE;
-int RETARDO_SWAP;
+int RETARDO_SWAP;  
 t_log_level LOG_LEVEL;
 char* DUMP_PATH;
 char* DIR_PSEUDOCODIGO;
 FILE * FILE_PSEUDOCODIGO;
 int TAM_MEMORIA_ACTUAL;
-//t_dictionary * lista_procesos;
 t_list *lista_procesos;
 
-//t_list *lista_enviar; 
 // VER DICCIONARIO Y  CAMBIAR POR LISTA INSTRUCCIONES
 sem_t *consultar_memoria;
 void* MEMORIA_USUARIO;
-                        //
-                            //
-                                //
-                                //
-                                //
-                                // dato[64] todos los procesos pueden acceder a todas la memoria o como se le asigna una pag concreta?
-                            //
-                            //
-                            //
-                        //
-                        //
-                        //
 
 // Estructuras
 struct pcb // proceso
@@ -76,6 +62,7 @@ struct pcb // proceso
     int PID;
     //int PC;                   //Es el ID de la lista
     int tamanio;
+    int tamanioEnPag;
     int accesoTablaPag;
     int instruccionSolicitada;
     int bajadaSWAP;
@@ -83,11 +70,10 @@ struct pcb // proceso
     int cantLecturas;
     int cantEscrituras;
     t_list *lista_instrucciones;
-    //lista de pag asigna
+    t_list *Tabla_Pag;
 };
 
 // Funciones que funcionan
-
 void iniciar_config()
 {
 	nuevo_conf = config_create("memoria.conf");
@@ -106,26 +92,8 @@ void iniciar_config()
     DUMP_PATH= config_get_string_value(nuevo_conf, "DUMP_PATH");
     DIR_PSEUDOCODIGO=config_get_string_value(nuevo_conf, "PATH_INSTRUCCIONES");
 
-    //lista_procesos =list_create();
-
     return;
 }
-
-/*void* gestion_conexiones(){
-    // Crea socket y espera
-    int socket_escucha = iniciar_modulo(PUERTO_ESCUCHA, log_memo);
-    while(1){
-        
-        // Recibe un cliente y crea un hilo personalizado para la conexión
-        socket_conectado = establecer_conexion(socket_escucha, log_memo);
-        pthread_t manejo_servidor;
-        pthread_create(&manejo_servidor,NULL,ingresar_conexion,(void*) socket_conectado);
-        pthread_detach(manejo_servidor);
-        
-    }
-    close(socket_escucha);
-    return;
-}*/
 
 void* ingresar_conexion(void * socket_void){
     int *socket = (int *) socket_void;
@@ -146,11 +114,82 @@ int str_to_int(char * txt, int ac){
     return num;
 }
 
-void leer_pseudo(){
+void Asociar_Proceso_a_Marco(){ // En los parametros de la funcion iria el proceso, el puntero de frames totales y el vector de Frames obtenidos
+
+//  No termino de entender bien como sería para asociar
+
+    return;
+}
+
+int pagsMaxPorNivel(int nivel){
+    int a=1;
+    for (int  i = 0; i < nivel; i++)
+    {
+        a*=ENTRADAS_POR_TABLA;
+    }
+
+    return a;
+}
+
+t_list* tablaLlenaEnTablas(int nivel){
+    t_list tabla=list_create();
+    if (nivel>1)
+    {
+        for (int j = 0; j < ENTRADAS_POR_TABLA; j++)
+        {
+            list_add(tabla,tablaLlenaEnTablas(nivel-1));
+        }
+            
+    }
+    else if(nivel == 1){
+        for (int j = 0; j < ENTRADAS_POR_TABLA; j++)
+        {
+            //list_add(tabla,obtener direccion());              // ASIGNAR DIRECCION EN NIVEL 1
+        }
+    }
+    return tabla;
+}
+
+t_list* generarTablaTamaño(int tam){
+    int pagNecesarias=tam/TAM_PAGINA;
+    t_list* tabla=list_create();
+    /*t_list* puntero=tabla;
+    t_list* aux=list_create();
+    int nivel=CANTIDAD_NIVELES;
+    int pagCreadas = 0;
+    */
+    
+    for (int i = CANTIDAD_NIVELES; i ; i++)
+    {
+       if (pagsMaxPorNivel)
+       {
+        /* code */
+       }
+       
+    }
+    
+    tabla=tablaLlenaEnTablas(CANTIDAD_NIVELES, pagNecesarias);
+    
+
+    /*while (pagCreadas < pagNecesarias)
+    {
+        
+        
+        //t_list* aux=list_create();
+        //list_add(tabla,aux);
+    }*/
+    
+
+    return tabla;
+}
+
+void leer_pseudo(bool* FramesDisp){
     struct pcb* proceso = malloc(sizeof(struct pcb));
+    
     if (!proceso) abort();
     proceso->PID=1;
     proceso->lista_instrucciones=list_create();
+    proceso->Tabla_Pag=list_create();
     proceso->tamanio = 0;
     proceso->accesoTablaPag = 0;
     proceso->instruccionSolicitada = 0;
@@ -158,6 +197,35 @@ void leer_pseudo(){
     proceso->subidasMemo = 1;
     proceso->cantLecturas = 0;
     proceso->cantEscrituras =0;
+
+    //int cantPag= proceso->tamanio / TAM_PAGINA;
+    
+    if(proceso->tamanio<0){ list_destroy(proceso->Tabla_Pag); list_destroy(proceso->lista_instrucciones); free(proceso); return NULL; }
+    else if(proceso->tamanio % TAM_PAGINA != 0) proceso->tamanioEnPag = (proceso->tamanio - (proceso->tamanio % TAM_PAGINA ) + TAM_PAGINA);
+    else proceso->tamanioEnPag=proceso->tamanio;
+
+    proceso->Tabla_Pag=generarTablaTamaño(proceso->tamanioEnPag);
+
+
+    /*
+    while (cantPag / 4 > 0){ // CantPag queda como producto de 4 VER DESPUES
+        cantPag = cantPag + 1;
+    }
+
+    int FramesObtendos[cantPag]; // Vector para las posiciones de los frames libres
+    for (int i = 0; i < cantPag; i++){
+        while (FramesDisp[j] != 0){
+            j++;
+            if (j > TAM_MEMORIA/TAM_PAGINA)
+                return; // No se consiguieron los frames necesarios
+        }
+        FramesObtendos[i] = j; //Aca quedan los frames disponibles 
+    }*/
+    // Podria venir aca una funcion tipo "Asociar_Proceso_a_Marco(proceso, FramesObtenidos) que asocie directo a todos"
+
+
+
+
 
     int tam_dir=1024;
     char * dir= malloc(tam_dir);
@@ -182,17 +250,10 @@ void leer_pseudo(){
     free(dir);
     return;
 }
-void enviar_toda_lista(t_list* lista){ // Funciona la lectura de solo la lista, falla al implementar un proceso
-    //struct pcb proceso= pro;
-    //for (int i = 0; i < list_size(proceso.lista_instrucciones); i++)
+void enviar_toda_lista(t_list* lista){ // Espera una lista a imprimir
     for (int i = 0; i < list_size(lista); i++)
     {
-        // Trae el elemento i de la lista (funciona como PC)
-        //char *posi=list_get(proceso.lista_instrucciones,i);
-        log_trace(log_memo,"escribir \n");
         log_trace(log_memo,"Guardar %s\n",(char *)list_get(lista,i));
-        //char *posi = list_get(lista,i);
-        //printf (posi);
     }
     return;
 }
@@ -213,6 +274,22 @@ void* gestion_conexiones(){
     close(socket_escucha);
     return NULL;
 }
+
+/*void* gestion_conexiones(){
+    // Crea socket y espera
+    int socket_escucha = iniciar_modulo(PUERTO_ESCUCHA, log_memo);
+    while(1){
+        
+        // Recibe un cliente y crea un hilo personalizado para la conexión
+        socket_conectado = establecer_conexion(socket_escucha, log_memo);
+        pthread_t manejo_servidor;
+        pthread_create(&manejo_servidor,NULL,ingresar_conexion,(void*) socket_conectado);
+        pthread_detach(manejo_servidor);
+        
+    }
+    close(socket_escucha);
+    return;
+}*/
 
 void destruir_proceso(void *pro){
     struct pcb *proceso= (struct pcb *) pro;
@@ -239,12 +316,16 @@ int main(int argc, char* argv[]) {
     TAM_MEMORIA_ACTUAL=TAM_MEMORIA;
     lista_procesos=list_create();
 
+    // Creamos el bitmap para los frames
+    bool *bitmap = malloc(sizeof(bool) * TAM_MEMORIA/TAM_PAGINA);
+    memset(bitmap, 0, sizeof(bool) * TAM_MEMORIA/TAM_PAGINA);
+
     // Creamos el log de memoria
     log_memo = log_create("memoria.log", "memoria", false, LOG_LEVEL);
 
-    leer_pseudo();
-    struct pcb *proceso=find_by_PID(lista_procesos,1);
+    leer_pseudo(bitmap);
 
+    struct pcb *proceso=find_by_PID(lista_procesos,1);
     t_list *lista = proceso->lista_instrucciones;
     enviar_toda_lista(lista);
 
@@ -261,7 +342,6 @@ int main(int argc, char* argv[]) {
     config_destroy(nuevo_conf);
     if (socket_conectado) close(*socket_conectado);
     log_destroy(log_memo);
-    //list_destroy_and_destroy_elements(lista_instrucciones,free);
     
     return 0;
 }
