@@ -127,71 +127,14 @@ int pagsMaxPorNivel(int nivel)
 {
     int a = 1;
     for (int i = 0; i < nivel; i++)
-    {
         a *= ENTRADAS_POR_TABLA;
-    }
-
     return a;
 }
 
-/*t_list* tablaLlenaDeTablas(int nivel){
-   t_list tabla=list_create();
-   if (nivel>1)
-   {
-       for (int j = 0; j < ENTRADAS_POR_TABLA; j++)
-       {
-           list_add(tabla,tablaLlenaDeTablas(nivel-1));
-       }
-
-   }
-   else if(nivel == 1){
-       for (int j = 0; j < ENTRADAS_POR_TABLA; j++)
-       {
-           //list_add(tabla,obtener direccion());              // ASIGNAR DIRECCION EN NIVEL 1
-       }
-   }
-   return tabla;
-}*/
-
-/*t_list *tablaFinal(int nivel, int *pagNecesarias)
-{
-    t_list *tabla = list_create();
-    if (nivel > 1)
-    {
-        if (pagNecesarias % pagsMaxPorNivel(nivel) != 0) // La tabla tiene un resto que se completa por separado.
-        {
-            for (int i = 0; i < (pagNecesarias / pagsMaxPorNivel(nivel)); i++) // "for" para la parte que si se completa toda
-            {
-                list_add(tabla, tablaFinal(nivel - 1, &pagNecesarias));
-            }
-            list_add(tabla, tablaFinal(nivel - 1, &pagNecesarias)); // Se completa el RESTO
-        }
-
-        else if (pagNecesarias >= pagsMaxPorNivel(nivel)) // El nivel se llena en su totalidad - "if" innecesario?
-        {
-            for (int j = 0; j < ENTRADAS_POR_TABLA; j++)
-            {
-                list_add(tabla, tablaFinal(nivel - 1, &pagNecesarias));
-            }
-        }
-    }
-    else if (nivel == 1) // El ultimo nivel tiene puntero a direcciones de memoria
-    {
-        for (int j = 0; j < ENTRADAS_POR_TABLA; j++)
-        {
-            // list_add(tabla,obtener direccion());              // ASIGNAR DIRECCION EN NIVEL 1
-            pagNecesarias--;
-        }
-    }
-    return tabla;
-}*/
-
 t_list *generarTablaTamaño(int tam)
 {
-    // int pagNecesarias=tam/TAM_PAGINA;
     t_list *tabla = list_create();
     t_list *listaPaginas = list_create();
-    // tabla = tablaFinal(CANTIDAD_NIVELES,&pagNecesarias);
 
     for (int i = 0; i < tam / TAM_PAGINA; i++)
     {
@@ -201,39 +144,34 @@ t_list *generarTablaTamaño(int tam)
 
     for (int i = 1; i <= CANTIDAD_NIVELES; i++)
     {
-
         while (list_size(listaPaginas) != 0)
         {
             t_list *intermedia = list_create();
-            // int recorrido=list_size(listaPaginas);
-            // for (int j = 0; j < recorrido; j++)
             int actual = 0;
             while (actual < ENTRADAS_POR_TABLA && list_size(listaPaginas) > 0)
             {
-                /*if (j >= ENTRADAS_POR_TABLA)
-                {
-                    break;
-                }*/
-                list_add(intermedia, list_remove(listaPaginas, 0));
+                list_add(intermedia, list_remove(listaPaginas, 0)); // PROBLEMA CON VALGRIM, NO LIBERA MEMORIA
                 actual++;
             }
             list_add(tabla, intermedia);
-            list_destroy(intermedia);
+            //intermedia=list_create();
+            //list_destroy(intermedia);
         }
 
+        list_destroy(listaPaginas);
         log_trace(log_memo, "La cant de elementos del nivel %d es %d", i, list_size(tabla));
 
         if (i < CANTIDAD_NIVELES)
         {
+            //list_destroy(listaPaginas);
             listaPaginas = tabla;
-            tabla=list_create();
+            tabla = list_create();
         }
-        else
+        /*else
         {
             list_destroy(listaPaginas);
-        }
+        }*/
     }
-
     return tabla;
 }
 
@@ -361,7 +299,7 @@ void *gestion_conexiones()
         if (nivel>1)
         {
             liberar(list_get(lista,0),nivel-1);
-            
+
         }
         else{
             list_clean_and_destroy_elements(lista,free);
@@ -371,22 +309,29 @@ void *gestion_conexiones()
     return NULL;
 }*/
 
-void liberar(t_list *tabla, int nivel_actual, int nivel_max) {
-    if (!tabla) return;
+void liberar(t_list *tabla, int nivel_actual, int nivel_max)
+{
+    if (!tabla)
+        return;
 
-    for (int i = 0; i < list_size(tabla); i++) {
-        void *elemento = list_get(tabla, i);
+    for (int i = 0; i < list_size(tabla); i++)
+    {
+        t_list *elemento = list_get(tabla, i);
 
-        if (nivel_actual < nivel_max) {
+        if (nivel_actual < nivel_max)
+        {
             // Si aún no llegamos al último nivel, asumimos que es otra t_list*
-            liberar((t_list *)elemento, nivel_actual + 1, nivel_max);
-        } else {
+            liberar(elemento, nivel_actual + 1, nivel_max);
+        }
+        else
+        {
             // Último nivel: liberar punteros individuales
             free(elemento);
         }
     }
 
-    list_destroy(tabla);  // libera solo la lista (no los elementos, ya fueron)
+    list_destroy(tabla); // libera solo la lista (no los elementos, ya fueron)
+    return NULL;
 }
 
 void destruir_proceso(void *pro)
@@ -425,7 +370,7 @@ int main(int argc, char *argv[])
     // Creamos el log de memoria
     log_memo = log_create("memoria.log", "memoria", false, LOG_LEVEL);
 
-    liberar(generarTablaTamaño((TAM_PAGINA * 40)),1,CANTIDAD_NIVELES);
+    liberar(generarTablaTamaño((TAM_PAGINA * 50)), 1, CANTIDAD_NIVELES);
 
     /*leer_pseudo(bitmap);
 
@@ -444,7 +389,12 @@ int main(int argc, char *argv[])
     */
 
     // Limpieza general, que no realiza
-    list_destroy_and_destroy_elements(lista_procesos, destruir_proceso);
+
+    free(bitmap);
+    if (!list_size(lista_procesos))
+        list_destroy_and_destroy_elements(lista_procesos, destruir_proceso);
+    else
+        list_destroy(lista_procesos);
     config_destroy(nuevo_conf);
     if (socket_conectado)
         close(*socket_conectado);
