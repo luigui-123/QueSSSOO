@@ -78,8 +78,6 @@ struct pcb_execute
 
 };
 
-const alfa = config_get_string_value(config_kernel, "ALGORITMO_INGRESO_A_READY");
-
 struct io
 {
     int socket_io;
@@ -121,7 +119,7 @@ void syscall_init_procc(char* tamanio, char* nombre)
     proceso_nuevo->tamanio = tamanio;
     proceso_nuevo->path = nombre;
     proceso_nuevo->PC = 0;
-    proceso_nuevo->rafaga = config_get_string_value(config_kernel, "ESTIMACION_INICIAL");
+    proceso_nuevo->rafaga = config_get_double_value(config_kernel, "ESTIMACION_INICIAL");
     sem_wait(&semaforo_new);
     queue_push(lista_new, proceso_nuevo);
     contador_procesos+=1;
@@ -319,7 +317,7 @@ void* escuchar_io()
 
 }
 
-void ssuspender_proceso(struct pcb* proceso)
+void suspender_proceso(struct pcb* proceso)
 {
 
     sem_wait(&semaforo_bloqued);
@@ -380,6 +378,7 @@ void planicador_mediano_plazo()
 
 actualizar_rafaga(struct pcb* proceso, int rafaga_real)
 {
+    double alfa = config_get_double_value(config_kernel, "ALFA");
     proceso->rafaga = (alfa * (double)rafaga_real + (1-alfa) * proceso->rafaga); 
 }
 
@@ -531,14 +530,14 @@ void* escucha_cpu_especifica(void* cpu)
 {
 
     t_paquete *proceso_a_ejecutar = crear_paquete();
-    struct Cpu* cpu = (struct Cpu*) cpu;
+    struct Cpu* cpu_especifica = (struct Cpu*) cpu;
 
     //Modificar para que se manden por separado    
-    agregar_a_paquete(proceso_a_ejecutar, cpu->proceso->pid, sizeof(int));
-    agregar_a_paquete(proceso_a_ejecutar, cpu->proceso->pc, sizeof(int));
+    agregar_a_paquete(proceso_a_ejecutar, cpu_especifica->proceso->PID, sizeof(int));
+    agregar_a_paquete(proceso_a_ejecutar, cpu_especifica->proceso->PC, sizeof(int));
 
     t_temporal * rafaga_real_actual = temporal_create();
-    enviar_paquete(proceso_a_ejecutar, cpu->socket_dispatch, log_kernel);
+    enviar_paquete(proceso_a_ejecutar, cpu_especifica->socket_dispatch, log_kernel);
         
         // [0] = Razón --> 0 = Exit, 1 = Init, 2 = Dump, 3 = I/O, 4 desalojo
         // [1] = Parametro Reservado para el PID
@@ -547,7 +546,7 @@ void* escucha_cpu_especifica(void* cpu)
         // IO --> Disp y tiempo / InitPrco -> Archivo y tamanio
         // 
 
-    t_list* paquete_recibido = recibir_paquete(cpu->socket_dispatch, log_kernel);
+    t_list* paquete_recibido = recibir_paquete(cpu_especifica->socket_dispatch, log_kernel);
 
     while (list_get(paquete_recibido, 0) ==  1)
     {
@@ -560,7 +559,7 @@ void* escucha_cpu_especifica(void* cpu)
             //ESto mandarlo a Execute -> Exit
             log_info(log_kernel, ""); //Proceso para enviar metricas
             cambio_estado_exit(pid_proceso_usado);
-            cpu->ocupado=0;
+            cpu_especifica->ocupado=0;
             
             sem_post(&cpu_disponibles);
             return NULL;
@@ -573,9 +572,9 @@ void* escucha_cpu_especifica(void* cpu)
         }
         else if (list_get(paquete_recibido, 0) ==  2) //Dump
         {
-            temporal_stop(t_temporal* rafaga_real_actual);
+            temporal_stop(rafaga_real_actual);
 
-            int tiempo_real = temporal_gettime(t_temporal* rafaga_real_actual);
+            int tiempo_real = temporal_gettime(rafaga_real_actual);
             
             
             actualizar_rafaga(pid_proceso_usado, tiempo_real);
@@ -585,16 +584,16 @@ void* escucha_cpu_especifica(void* cpu)
             pthread_t dump_proceso;
             pthread_create(&dump_proceso, NULL, (void *(*)(void *))syscall_dump_memory, (void*)pid_proceso_usado);
             pthread_detach(&dump_proceso);
-            cpu->ocupado=0;
+            cpu_especifica->ocupado=0;
             sem_post(&cpu_disponibles);
 
             return NULL;
         }
         else if (list_get(paquete_recibido, 0) ==  3) //IO
         {
-            temporal_stop(t_temporal* rafaga_real_actual);
+            temporal_stop(rafaga_real_actual);
 
-            int tiempo_real = temporal_gettime(t_temporal* rafaga_real_actual);
+            int tiempo_real = temporal_gettime(rafaga_real_actual);
             
             actualizar_rafaga(pid_proceso_usado, tiempo_real);
 
@@ -616,7 +615,7 @@ void* escucha_cpu_especifica(void* cpu)
 
 
 
-            cpu->ocupado=0;
+            cpu_especifica->ocupado=0;
             sem_post(&cpu_disponibles);
                 //Cuando bloqueo --> enviar proceso a la lista de bloqueados Y a la lista de la IO
                 //Agregar en IO, Lista_bloqueados y "ocupado". 
@@ -628,9 +627,9 @@ void* escucha_cpu_especifica(void* cpu)
         }
         else if (list_get(paquete_recibido, 0) ==  4) //DECHALOGO
         {
-            temporal_stop(t_temporal* rafaga_real_actual);
+            temporal_stop(rafaga_real_actual);
 
-            int tiempo_real = temporal_gettime(t_temporal* rafaga_real_actual);
+            int tiempo_real = temporal_gettime(rafaga_real_actual);
                 
             actualizar_rafaga(pid_proceso_usado, tiempo_real);
             struct pcb* proceso_a_desalojar = encontrar_proceso_especifico(lista_execute, pid_proceso_usado);
@@ -638,7 +637,7 @@ void* escucha_cpu_especifica(void* cpu)
             cambio_estado_ready(proceso_a_desalojar);
 
         }
-        t_list* paquete_recibido = recibir_paquete(cpu->socket_dispatch, log_kernel);
+        t_list* paquete_recibido = recibir_paquete(cpu_especifica->socket_dispatch, log_kernel);
 
     }
 
@@ -678,12 +677,12 @@ void* comparar_rafaga(void* p1, void* p2)
 }
 
 
-struct cpu* encontrar_proceso_especifico_en_ejecucion(t_list* lista, int pid)
+struct Cpu* encontrar_proceso_especifico_en_ejecucion(t_list* lista, int pid)
 {
     bool encontrar_proceso(void* elemento)
     {
-        struct cpu* cpu = (struct cpu*) elemento;
-        return cpu->proceso->pid == pid;
+        struct Cpu* cpu = (struct cpu*) elemento;
+        return cpu->proceso->PID == pid;
     }
     struct cpu* cpu_buscada = ((struct cpu*)list_find(lista, encontrar_proceso));
     return cpu_buscada;
@@ -748,10 +747,10 @@ void planificacion_corto_plazo()
             proceso =  list_get_minimum(lista_ready, comparar_rafaga);
             struct pcb* proceso_a_desalojar = list_get_minimum(lista_execute, comparar_rafaga);
 
-            if (proceso->rafaga < proceso_a_desalojar)
+            if (proceso->rafaga < proceso_a_desalojar->rafaga)
             {
                 //Call a CPU
-                struct cpu* cpu_buscada = encontrar_proceso_especifico_en_ejecucion(lista_cpu, proceso_a_desalojar->PID);
+                struct Cpu* cpu_buscada = encontrar_proceso_especifico_en_ejecucion(lista_cpu, proceso_a_desalojar->PID);
                 char* mensaje_cpu = "DESALOJAR";
 
                 enviar_mensaje(mensaje_cpu, cpu_buscada->socket_interrupt, log_kernel);
