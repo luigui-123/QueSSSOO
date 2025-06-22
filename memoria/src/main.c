@@ -1,4 +1,3 @@
-
 #include <commons/log.h>
 #include <commons/config.h>
 #include <sys/socket.h>
@@ -115,12 +114,28 @@ int str_to_int(char *txt, int ac)
     return num;
 }
 
-void Asociar_Proceso_a_Marco()
-{ // En los parametros de la funcion iria el proceso, el puntero de frames totales y el vector de Frames obtenidos
+int Asociar_Proceso_a_Marco(bool libres[])
+{ 
+    int taman=TAM_MEMORIA / TAM_PAGINA;
+    for (int i = 0; i < taman; i++)
+    {
+        if(!libres[i]){
+            libres[i]=1;
+            return i;
+        }
+    }
+    abort();
+    return -1;
+}
 
-    //  No termino de entender bien como sería para asociar
-
-    return;
+void Liberar_Proceso_de_Marco(bool libres[],int i)
+{   
+    if(libres[i]){
+        log_trace(log_memo,"%d",i);
+        libres[i]=0;
+        return NULL;
+    }
+    return NULL;
 }
 
 int pagsMaxPorNivel(int nivel)
@@ -131,14 +146,14 @@ int pagsMaxPorNivel(int nivel)
     return a;
 }
 
-t_list *generarTablaTamaño(int tam)
+t_list *generarTablaTamaño(int tam, bool libres[])
 {
     t_list *tabla = list_create();
     t_list *listaPaginas = list_create();
 
     for (int i = 0; i < tam / TAM_PAGINA; i++)
     {
-        void *puntero = 5; // obtenerDireccion();
+        int puntero = Asociar_Proceso_a_Marco(libres); // obtenerDireccion();
         list_add(listaPaginas, puntero);
     }
 
@@ -206,7 +221,7 @@ void leer_pseudo(bool *FramesDisp)
     else
         proceso->tamanioEnPag = proceso->tamanio;
 
-    proceso->Tabla_Pag = generarTablaTamaño(proceso->tamanioEnPag);
+    proceso->Tabla_Pag = generarTablaTamaño(proceso->tamanioEnPag,FramesDisp);
 
     /*
     while (cantPag / 4 > 0){ // CantPag queda como producto de 4 VER DESPUES
@@ -292,24 +307,7 @@ void *gestion_conexiones()
     return;
 }*/
 
-/*void liberar(t_list *lista, int nivel)
-{
-    while (list_size(lista))
-    {
-        if (nivel>1)
-        {
-            liberar(list_get(lista,0),nivel-1);
-
-        }
-        else{
-            list_clean_and_destroy_elements(lista,free);
-        }
-    }
-    list_destroy(lista);
-    return NULL;
-}*/
-
-void liberar(t_list *tabla, int nivel_actual, int nivel_max)
+void liberar(t_list *tabla, int nivel_actual, int nivel_max,bool libres[])
 {
     if (!tabla)
         return;
@@ -321,15 +319,21 @@ void liberar(t_list *tabla, int nivel_actual, int nivel_max)
         if (nivel_actual < nivel_max)
         {
             // Si aún no llegamos al último nivel, asumimos que es otra t_list*
-            liberar(elemento, nivel_actual + 1, nivel_max);
+            liberar(elemento, nivel_actual + 1, nivel_max,libres);
         }
         else
         {
             // Último nivel: liberar punteros individuales
+            //for (int j = 0; j < list_size(elemento); j++)
+
+            while(0<list_size(elemento))
+            {
+                Liberar_Proceso_de_Marco(libres,list_remove(elemento,0));
+            }
+            
             free(elemento);
         }
     }
-
     list_destroy(tabla); // libera solo la lista (no los elementos, ya fueron)
     return NULL;
 }
@@ -370,8 +374,17 @@ int main(int argc, char *argv[])
     // Creamos el log de memoria
     log_memo = log_create("memoria.log", "memoria", false, LOG_LEVEL);
 
-    liberar(generarTablaTamaño((TAM_PAGINA * 50)), 1, CANTIDAD_NIVELES);
+    t_list* tabla1=generarTablaTamaño((TAM_PAGINA * 32),bitmap);
+    t_list* tabla2=generarTablaTamaño((TAM_PAGINA * 20),bitmap);
 
+    liberar(tabla1, 1, CANTIDAD_NIVELES,bitmap);
+    //liberar(tabla2, 1, CANTIDAD_NIVELES,bitmap);
+
+    t_list* tabla3=generarTablaTamaño((TAM_PAGINA * 40),bitmap);
+    liberar(tabla3, 1, CANTIDAD_NIVELES,bitmap);
+
+    liberar(tabla2, 1, CANTIDAD_NIVELES,bitmap);
+    
     /*leer_pseudo(bitmap);
 
     struct pcb *proceso = find_by_PID(lista_procesos, 1);
@@ -389,6 +402,7 @@ int main(int argc, char *argv[])
     */
 
     // Limpieza general, que no realiza
+    
 
     free(bitmap);
     if (!list_size(lista_procesos))
