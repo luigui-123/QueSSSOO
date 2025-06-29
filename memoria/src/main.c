@@ -88,7 +88,7 @@ void iniciar_config()
     char *nivel_log = config_get_string_value(nuevo_conf, "LOG_LEVEL");
     LOG_LEVEL = log_level_from_string(nivel_log);
     DUMP_PATH = config_get_string_value(nuevo_conf, "DUMP_PATH");
-    DIR_PSEUDOCODIGO = config_get_string_value(nuevo_conf, "PATH_INSTRUCCIONES");
+    DIR_PSEUDOCODIGO = config_get_string_value(nuevo_conf, "PATH_PSEUDOCODIGO");
 
     return;
 }
@@ -146,7 +146,8 @@ int pagsMaxPorNivel(int nivel)
     return a;
 }
 
-t_list *generarTablaTamaño(int tam, bool libres[])
+// El tamaño de paginas esta casteado a TAM_PAGINA
+t_list *generarTablaTamaño(int tam, bool libres[])  
 {
     t_list *tabla = list_create();
     t_list *listaPaginas = list_create();
@@ -264,6 +265,67 @@ void leer_pseudo(bool *FramesDisp)
     free(dir);
     return;
 }
+
+void peticion_creacion(int tamanio,bool* frames_libres,char * archivo,int PDI){
+    if (tamanio < 0 || tamanio > TAM_MEMORIA_ACTUAL)
+    {
+        // Enviar negacion
+    }
+    else if (tamanio % TAM_PAGINA != 0){
+        tamanio = (tamanio - (tamanio % TAM_PAGINA) + TAM_PAGINA);
+        TAM_MEMORIA_ACTUAL-=tamanio;
+        crear_proceso(frames_libres,archivo,tamanio,PDI);
+    }
+    else{
+        TAM_MEMORIA_ACTUAL-=tamanio;
+        crear_proceso(frames_libres,archivo,tamanio,PDI);
+    }
+    return;
+}
+
+void crear_proceso(bool *FramesDisp,char * archivo, int tamanio_casteado, int num_proceso){  // Hay espacio en memoria y se crea el proceso
+    struct pcb *proceso = malloc(sizeof(struct pcb));
+
+    if (!proceso)
+        abort();
+    proceso->PID = num_proceso;
+    proceso->lista_instrucciones = list_create();
+    proceso->Tabla_Pag=generarTablaTamaño(tamanio_casteado,FramesDisp);
+    proceso->tamanio = tamanio_casteado;
+    proceso->accesoTablaPag = 0;
+    proceso->instruccionSolicitada = 0;
+    proceso->bajadaSWAP = 0;
+    proceso->subidasMemo = 1;
+    proceso->cantLecturas = 0;
+    proceso->cantEscrituras = 0;
+
+    int tam_dir = 1024;
+    char *dir = malloc(tam_dir);
+    memset(dir, 0, tam_dir);
+    strcat(dir, DIR_PSEUDOCODIGO);
+
+    // Completa la ruta al archivo
+    //strcat(dir, "pseudocodigo.txt");
+    strcat(dir, archivo);
+
+    if ((FILE_PSEUDOCODIGO = fopen(dir, "r")) != NULL)
+    {
+        char cont[256];
+
+        // Obtiene lineas hasta el final de archivo
+        while (fgets(cont, 256, FILE_PSEUDOCODIGO))
+        {
+            char *guarda = string_duplicate(cont);          // Pone la linea en un puntero
+            list_add(proceso->lista_instrucciones, guarda); // Aniade a la lista la linea de turno
+        }
+        fclose(FILE_PSEUDOCODIGO);
+        // dictionary_put(lista_procesos,"1", (void*) &proceso); // Aniade a diccionario, "1" seria el PID
+        list_add(lista_procesos, proceso);
+    }
+    free(dir);
+    return;
+}
+
 void enviar_toda_lista(t_list *lista)
 { // Espera una lista a imprimir
     for (int i = 0; i < list_size(lista); i++)
@@ -340,9 +402,9 @@ void liberar(t_list *tabla, int nivel_actual, int nivel_max,bool libres[])
 
 void destruir_proceso(void *pro)
 {
-    struct pcb *proceso = (struct pcb *)pro;
+    /*struct pcb *proceso = (struct pcb *)pro;
     list_destroy_and_destroy_elements(proceso->lista_instrucciones, free);
-    free(proceso);
+    free(proceso);*/
     return;
 }
 
@@ -354,6 +416,21 @@ struct pcb *find_by_PID(t_list *lista, int i)
         return proceso->PID == i;
     }
     return list_find(lista, PID_contains);
+}
+
+void eliminar_proceso(t_list *lista, int i, bool * libres){
+    struct pcb *proceso= find_by_PID(lista,i);
+    liberar(proceso->Tabla_Pag,1,CANTIDAD_NIVELES,libres);
+    list_destroy_and_destroy_elements(proceso->lista_instrucciones, free);
+
+    bool mismoPDI(struct pcb* pdi){
+        
+        return pdi->PID==i;
+    }
+
+    list_remove_and_destroy_by_condition(lista,mismoPDI,free);
+    //free(proceso);
+    return;
 }
 
 int main(int argc, char *argv[])
@@ -368,13 +445,13 @@ int main(int argc, char *argv[])
     lista_procesos = list_create();
 
     // Creamos el bitmap para los frames
-    bool *bitmap = malloc(sizeof(bool) * TAM_MEMORIA / TAM_PAGINA);
+    bool*bitmap = malloc(sizeof(bool) * TAM_MEMORIA / TAM_PAGINA);
     memset(bitmap, 0, sizeof(bool) * TAM_MEMORIA / TAM_PAGINA);
 
     // Creamos el log de memoria
     log_memo = log_create("memoria.log", "memoria", false, LOG_LEVEL);
 
-    t_list* tabla1=generarTablaTamaño((TAM_PAGINA * 32),bitmap);
+    /*t_list* tabla1=generarTablaTamaño((TAM_PAGINA * 32),bitmap);
     t_list* tabla2=generarTablaTamaño((TAM_PAGINA * 20),bitmap);
 
     liberar(tabla1, 1, CANTIDAD_NIVELES,bitmap);
@@ -384,6 +461,28 @@ int main(int argc, char *argv[])
     liberar(tabla3, 1, CANTIDAD_NIVELES,bitmap);
 
     liberar(tabla2, 1, CANTIDAD_NIVELES,bitmap);
+    */
+
+    peticion_creacion(1023,bitmap,"pseudocodigo.txt",2);
+
+    peticion_creacion(12,bitmap,"pseudocodigo.txt",1);
+
+    peticion_creacion(128,bitmap,"pseudocodigo.txt",3);
+
+    struct pcb *proceso2=find_by_PID(lista_procesos,2);
+    enviar_toda_lista(proceso2->lista_instrucciones);
+
+    struct pcb *proceso1=find_by_PID(lista_procesos,1);
+    enviar_toda_lista(proceso1->lista_instrucciones);
+
+    struct pcb *proceso3=find_by_PID(lista_procesos,3);
+    enviar_toda_lista(proceso3->lista_instrucciones);
+
+    eliminar_proceso(lista_procesos,1,bitmap);
+    eliminar_proceso(lista_procesos,2,bitmap);
+    eliminar_proceso(lista_procesos,3,bitmap);
+    
+
     
     /*leer_pseudo(bitmap);
 
@@ -396,10 +495,10 @@ int main(int argc, char *argv[])
     pthread_create(&servidor, NULL, gestion_conexiones, NULL);
 
     // Esperamos a que el hilo termine, aunque nunca lo haga
-    pthread_join(servidor, NULL);
+    pthread_join(servidor, NULL);*/
     // pthread_detach(servidor);
 
-    */
+    
 
     // Limpieza general, que no realiza
     
