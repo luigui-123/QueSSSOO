@@ -143,7 +143,6 @@ void Liberar_Proceso_de_Marco(int i)
         }*/
 
         bitmap[i]=0;
-        return NULL;
     }
     return NULL;
 }
@@ -389,7 +388,7 @@ void enviar_toda_lista(t_list *lista)
 { // Espera una lista a imprimir
     for (int i = 0; i < list_size(lista); i++)
     {
-        //log_trace(log_memo, "Guardar %s\n", (char *)list_get(lista, i));
+        log_trace(log_memo, "Guardar %s\n", (char *)list_get(lista, i));
     }
     return;
 }
@@ -514,10 +513,12 @@ void tabla_a_archivo (t_list *tabla, int nivel_actual, int nivel_max,FILE* swap)
         }
         else
         {
-            int item=0;
-            while(item<list_size(elemento))
+            //int item=0;
+            //while(item<list_size(elemento))
+            while (0<list_size(elemento))            
             {
-                int pag=list_get(elemento,item);
+                //int pag=list_get(elemento,item);
+                int pag=list_remove(elemento,0);
                 log_trace(log_memo,"se guardo el marco %d",pag);  // REEMPLAZAR POR PAG EN LUGAR DE INT
                 /*char* contenido=malloc(TAM_PAGINA);
                 memset(contenido, 0, TAM_PAGINA);
@@ -526,13 +527,14 @@ void tabla_a_archivo (t_list *tabla, int nivel_actual, int nivel_max,FILE* swap)
                 free(contenido);*/
                 fwrite(MEMORIA_USUARIO+(pag*TAM_PAGINA),sizeof(char)*TAM_PAGINA,1,swap);
                 Liberar_Proceso_de_Marco(pag);
-                item++;
+                //log_trace(log_memo,"la nueva pag es %d",list_get(elemento,item));
+                //item++;
             }
             
-            //free(elemento);
+            free(elemento);
         }
     }
-    //list_destroy(tabla); // libera solo la lista (no los elementos, ya fueron)
+    list_destroy(tabla); // libera solo la lista (no los elementos, ya fueron)
     
     return NULL;
 }
@@ -629,7 +631,7 @@ void desuspender(int i){
                 fread(&PID,sizeof(int),1,swap);
                 fread(&tam,sizeof(int),1,swap);
                 if(PID==i){
-                    liberar(proceso->Tabla_Pag,1,CANTIDAD_NIVELES);
+                    //liberar(proceso->Tabla_Pag,1,CANTIDAD_NIVELES);
                     proceso->Tabla_Pag=reasignar_tabla(tam,swap);
                     break;
                 }
@@ -675,28 +677,28 @@ int main(int argc, char *argv[])
 
     liberar(tabla2, 1, CANTIDAD_NIVELES,bitmap);
     */
-   peticion_creacion(116,"pseudocodigo.txt",1);
+    peticion_creacion(116,"pseudocodigo.txt",1);
     peticion_creacion(1023,"pseudocodigo.txt",2);
 
-    struct pcb *proceso2=find_by_PID(lista_procesos,2);
-    enviar_toda_lista(proceso2->lista_instrucciones);
+    //struct pcb *proceso2=find_by_PID(lista_procesos,2);
+    //enviar_toda_lista(proceso2->lista_instrucciones);
 
-    struct pcb *proceso1=find_by_PID(lista_procesos,1);
-    enviar_toda_lista(proceso1->lista_instrucciones);
+    //struct pcb *proceso1=find_by_PID(lista_procesos,1);
+    //enviar_toda_lista(proceso1->lista_instrucciones);
 
-
-    suspender(2);
     suspender(1);
+    suspender(2);
 
     desuspender(1);
     desuspender(2);
+
 
     /*t_list* cadena=list_create();
     tabla_a_lista(proceso1->Tabla_Pag,1,CANTIDAD_NIVELES,cadena);
     log_trace(log_memo,"el tamaño en pags es de %d",list_size(cadena));*/
 
     eliminar_proceso(1);
-    eliminar_proceso(2);    
+    //eliminar_proceso(2);    
 
     
     /*leer_pseudo(bitmap);
