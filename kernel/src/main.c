@@ -59,6 +59,9 @@ sem_t semaforo_io;
 sem_t procesos_bloqueados;
 sem_t cpu_disponibles;
 sem_t procesos_creados;
+sem_t proceso_desalojado;
+sem_t memoria__ocupada;
+sem_t procesos_listos;
 
 
 struct Cpu
@@ -123,6 +126,9 @@ void syscall_init_procc(char* tamanio, char* nombre)
     sem_wait(&semaforo_new);
     queue_push(lista_new, proceso_nuevo);
     contador_procesos+=1;
+
+    log_info(log_kernel, ("%d Se crea el proceso - Estado: NEW", proceso_nuevo->PID));
+
     sem_post(&semaforo_new);
     sem_post(&procesos_creados);
     
@@ -206,6 +212,7 @@ void cambio_estado_ready(struct pcb* proceso)
     queue_push(lista_ready, proceso);
     sem_post(&semaforo_ready);
 
+    sem_post(&procesos_listos);
 }
 
 
@@ -253,10 +260,24 @@ void planificador_io(struct io* io_asociada)
 
         sem_wait(&semaforo_bloqued);
         struct pcb* proceso = encontrar_proceso_especifico(lista_bloqued, peticion->pid);
-        list_remove_element ((t_list*)lista_bloqued, proceso);
+        if (proceso != NULL)
+        {
+            list_remove_element ((t_list*)lista_bloqued, proceso);
+            cambio_estado_ready(proceso);
+            
+        }
+        else
+        {
+            sem_wait(&semaforo_bloqued_sus);
+            proceso = encontrar_proceso_especifico(lista_sus_bloqued, peticion->pid);
+            list_remove_element ((t_list*)lista_sus_bloqued, proceso);
+            queue_push(lista_sus_ready, proceso);
+            sem_post(&semaforo_bloqued_sus);
+        }
+        
         sem_post((&semaforo_bloqued));
 
-        cambio_estado_ready(proceso);
+
         free(peticion);
         peticion=NULL;
     }
@@ -337,7 +358,6 @@ void suspender_proceso(struct pcb* proceso)
     agregar_a_paquete(paquete_dump, (void*)puntero_pid, sizeof(int));
     enviar_paquete(paquete_dump, conexion, log_kernel);
     free(puntero_pid);
-    
 }
 
 void cronometrar_proceso(struct pcb* proceso)
@@ -404,6 +424,22 @@ void cambio_estado_exit(int pid)
     struct pcb* proceso_a_terminar = encontrar_proceso_especifico(lista_execute, pid);
     list_remove_element ((t_list*)lista_execute, proceso_a_terminar);
     sem_post(&semaforo_execute); 
+    
+    int conexion_memoria = peticion_memoria();
+    
+    t_paquete* paquete_proceso_terminado = crear_paquete();
+
+    int* puntero_pid = malloc(sizeof(int));
+    *puntero_pid = pid; 
+    char* mensaje = "Proceso terminado";
+    agregar_a_paquete(mensaje, (void*)puntero_pid, sizeof(int));
+
+
+    agregar_a_paquete(paquete_proceso_terminado, (void*)puntero_pid, sizeof(int));
+    enviar_paquete(paquete_proceso_terminado, conexion_memoria, log_kernel);
+
+
+    sem_post(memoria__ocupada);
 
     queue_push(lista_finished, proceso_a_terminar);
 
@@ -423,9 +459,9 @@ void planifacion_largo_plazo()
 {
     char* tipo_planificacion = config_get_string_value(config_kernel, "ALGORITMO_INGRESO_A_READY");
     struct pcb* proceso;
-    
+    while (true)
+    {
     sem_wait(&procesos_creados);
-
     if (tipo_planificacion == "FIFO")
     {
         //cambio_estado_ready();
@@ -436,7 +472,14 @@ void planifacion_largo_plazo()
 
             char* tamnio_proceso = proceso->tamanio;
             int conexion_memoria = peticion_memoria();
+            
+            
+            
             enviar_mensaje(tamnio_proceso, conexion_memoria, log_kernel);
+
+            //Modificar a paquete
+
+
             if (recibir_mensaje(conexion_memoria, log_kernel) == "Ok")
             {
                 sem_post(&semaforo_ready_sus);
@@ -446,6 +489,7 @@ void planifacion_largo_plazo()
             else
             {
                 sem_post(&semaforo_ready_sus);
+                sem_wait(&memoria__ocupada);
                 //Semaforo de no hay mas espacio en memoria
             }
         }
@@ -466,6 +510,7 @@ void planifacion_largo_plazo()
             else
             {
                 sem_post(&semaforo_new);
+                sem_wait(&memoria__ocupada);
                 //Semaforo de no hay mas espacio en memoria
             }
         }
@@ -488,8 +533,9 @@ void planifacion_largo_plazo()
             }
             else
             {
+
                 sem_post(&semaforo_ready_sus);
-                //Semaforo de no hay mas espacio en memoria
+                sem_wait(&memoria__ocupada);
             }
 
 
@@ -509,10 +555,12 @@ void planifacion_largo_plazo()
             else
             {
                 sem_post(&semaforo_ready);
-                //Semaforo de no hay mas espacio en memoria
+                sem_wait(&memoria__ocupada);
             }
         }
         //Luego achicar con función "Encontrar proceso mas pequeño".
+    }
+    
         
     }
 
@@ -557,7 +605,9 @@ void* escucha_cpu_especifica(void* cpu)
         {
             //revisar para Listas.
             //ESto mandarlo a Execute -> Exit
-            log_info(log_kernel, ""); //Proceso para enviar metricas
+
+            log_info(log_kernel, ("%d - solicitó syscall: Exit", pid_proceso_usado)); //Proceso para enviar metricas
+            log_info(log_kernel, ("%d - Pasa del estado Execute al Estado Exit", pid_proceso_usado));
             cambio_estado_exit(pid_proceso_usado);
             cpu_especifica->ocupado=0;
             
@@ -566,12 +616,14 @@ void* escucha_cpu_especifica(void* cpu)
         }
         else if (*((int*)list_get(paquete_recibido, 0)) ==  1) //Init
         {
+            log_info(log_kernel, ("%d - solicitó syscall: Init Procc", pid_proceso_usado));
             syscall_init_procc(list_get(paquete_recibido, 3), list_get(paquete_recibido, 4));
             //Meter mensaje a CPU
             
         }
         else if (list_get(paquete_recibido, 0) ==  2) //Dump
         {
+            log_info(log_kernel, ("%d - solicitó syscall: Dump Memory", pid_proceso_usado));
             temporal_stop(rafaga_real_actual);
 
             int tiempo_real = temporal_gettime(rafaga_real_actual);
@@ -591,6 +643,9 @@ void* escucha_cpu_especifica(void* cpu)
         }
         else if (list_get(paquete_recibido, 0) ==  3) //IO
         {
+            log_info(log_kernel, ("%d - solicitó syscall: IO", pid_proceso_usado));
+
+
             temporal_stop(rafaga_real_actual);
 
             int tiempo_real = temporal_gettime(rafaga_real_actual);
@@ -601,10 +656,13 @@ void* escucha_cpu_especifica(void* cpu)
             struct io* dispositivo_necesitado = encontrar_io_especifico(lista_io, (char*)list_get(paquete_recibido, 3));
             if (!dispositivo_necesitado)
             {
+                log_info(log_kernel, ("%d - Pasa del estado Execute al Estado Exit", pid_proceso_usado));
+
                 cambio_estado_exit(pid_proceso_usado);
             }
             struct peticion_io* peticion = malloc(sizeof(struct peticion_io)); 
-            
+            log_info(log_kernel, ("%d - Bloqueado por IO: %s", pid_proceso_usado, dispositivo_necesitado->nombre));
+
             peticion->tiempo = *((int*)list_get(paquete_recibido, 4));
             peticion->io_asociada = dispositivo_necesitado;
             peticion->pid = pid_proceso_usado;
@@ -625,8 +683,10 @@ void* escucha_cpu_especifica(void* cpu)
                 //LO mismo que en Exit. Modificar para que sea unico proceso --> Cambio de Execute a Exit
 
         }
-        else if (list_get(paquete_recibido, 0) ==  4) //DECHALOGO
+        else if (list_get(paquete_recibido, 0) ==  4) //Desalojo
         {
+            log_info(log_kernel, ("%d - solicitó syscall: Desalojo", pid_proceso_usado));
+
             temporal_stop(rafaga_real_actual);
 
             int tiempo_real = temporal_gettime(rafaga_real_actual);
@@ -635,6 +695,7 @@ void* escucha_cpu_especifica(void* cpu)
             struct pcb* proceso_a_desalojar = encontrar_proceso_especifico(lista_execute, pid_proceso_usado);
 
             cambio_estado_ready(proceso_a_desalojar);
+            sem_post(&proceso_desalojado);
 
         }
         t_list* paquete_recibido = recibir_paquete(cpu_especifica->socket_dispatch, log_kernel);
@@ -677,7 +738,7 @@ void* comparar_rafaga(void* p1, void* p2)
 }
 
 
-struct Cpu* encontrar_proceso_especifico_en_ejecucion(t_list* lista, int pid)
+struct Cpu* encontrar_cpu_especifica_en_ejecucion(t_list* lista, int pid)
 {
     bool encontrar_proceso(void* elemento)
     {
@@ -694,76 +755,78 @@ void planificacion_corto_plazo()
 
     char* tipo_planificacion = config_get_string_value(config_kernel, "ALGORITMO_INGRESO_A_READY");
     struct pcb* proceso;
-    if (strcmp(tipo_planificacion, "FIFO") == 0)
+    wait(&procesos_listos);
+    while (true)
     {
-        sem_wait(&semaforo_cpu);
-        sem_wait(&cpu_disponibles);
-
-        struct Cpu* cpu_libre = (struct Cpu*) list_find(lista_cpu, buscar_disponible);
-        if (cpu_libre != NULL)
+        if (strcmp(tipo_planificacion, "FIFO") == 0)
         {
-            sem_wait(&semaforo_ready);
-            proceso = queue_pop(lista_ready);
-            sem_post(&semaforo_ready);
-            cambio_estado_execute(cpu_libre, proceso);
-        }   
-       //Lo mejor seria un semaforo cuando termine algun proceso o meter un while?
-        sem_post(&semaforo_cpu);
-    }
-    else if (tipo_planificacion == "SJF sin Desalo")
-    {
-        sem_wait(&semaforo_cpu);
-        sem_wait(&cpu_disponibles);
+            sem_wait(&semaforo_cpu);
+            sem_wait(&cpu_disponibles);
 
-        struct Cpu* cpu_libre = (struct Cpu*) list_find(lista_cpu, buscar_disponible);
-        if (cpu_libre != NULL)
-        {
-            proceso =  list_get_minimum(lista_ready, comparar_rafaga);
-            sem_wait(&semaforo_ready);
-            proceso = queue_pop(lista_ready);
-            sem_post(&semaforo_ready);
-            cambio_estado_execute(cpu_libre, proceso);
-                        
-
-        }
-        sem_post(&semaforo_cpu);
-    }
-    else if (tipo_planificacion == "SJF con Desalo")
-    {
-        sem_wait(&semaforo_cpu);
-        sem_wait(&cpu_disponibles);
-
-        struct Cpu* cpu_libre = (struct Cpu*) list_find(lista_cpu, buscar_disponible);
-        if (cpu_libre != NULL)
-        {
-            proceso =  list_get_minimum(lista_ready, comparar_rafaga);
-            sem_wait(&semaforo_ready);
-            proceso = queue_pop(lista_ready);
-            sem_post(&semaforo_ready);
-            cambio_estado_execute(cpu_libre, proceso);
-        }
-        else
-        {
-            proceso =  list_get_minimum(lista_ready, comparar_rafaga);
-            struct pcb* proceso_a_desalojar = list_get_minimum(lista_execute, comparar_rafaga);
-
-            if (proceso->rafaga < proceso_a_desalojar->rafaga)
+            struct Cpu* cpu_libre = (struct Cpu*) list_find(lista_cpu, buscar_disponible);
+            if (cpu_libre != NULL)
             {
-                //Call a CPU
-                struct Cpu* cpu_buscada = encontrar_proceso_especifico_en_ejecucion(lista_cpu, proceso_a_desalojar->PID);
-                char* mensaje_cpu = "DESALOJAR";
+                sem_wait(&semaforo_ready);
+                proceso = queue_pop(lista_ready);
+                sem_post(&semaforo_ready);
+                cambio_estado_execute(cpu_libre, proceso);
+            }   
+        //Lo mejor seria un semaforo cuando termine algun proceso o meter un while?
+            sem_post(&semaforo_cpu);
+        }
+        else if (tipo_planificacion == "SJF sin Desalo")
+        {
+            sem_wait(&semaforo_cpu);
+            sem_wait(&cpu_disponibles);
 
-                enviar_mensaje(mensaje_cpu, cpu_buscada->socket_interrupt, log_kernel);
-
-                cambio_estado_execute(cpu_buscada, proceso);
-
+            struct Cpu* cpu_libre = (struct Cpu*) list_find(lista_cpu, buscar_disponible);
+            if (cpu_libre != NULL)
+            {
+                proceso =  list_get_minimum(lista_ready, comparar_rafaga);
+                sem_wait(&semaforo_ready);
+                proceso = queue_pop(lista_ready);
+                sem_post(&semaforo_ready);
+                cambio_estado_execute(cpu_libre, proceso);
+                            
 
             }
-        
+            sem_post(&semaforo_cpu);
         }
-        sem_post(&semaforo_cpu);
-    }
+        else if (tipo_planificacion == "SJF con Desalo")
+        {
+            
+            sem_wait(&semaforo_cpu);
+            struct Cpu* cpu_libre = (struct Cpu*) list_find(lista_cpu, buscar_disponible);
+            if (cpu_libre != NULL)
+            {
+                proceso =  list_get_minimum(lista_ready, comparar_rafaga);
+                sem_wait(&semaforo_ready);
+                proceso = queue_pop(lista_ready);
+                sem_post(&semaforo_ready);
+                cambio_estado_execute(cpu_libre, proceso);
+            }
+            else
+            {
+                proceso =  list_get_minimum(lista_ready, comparar_rafaga);
+                struct pcb* proceso_a_desalojar = list_get_maximum(lista_execute, comparar_rafaga);
 
+                if (proceso->rafaga < proceso_a_desalojar->rafaga)
+                {
+                    //Call a CPU
+                    struct Cpu* cpu_buscada = encontrar_cpu_especifica_en_ejecucion(lista_cpu, proceso_a_desalojar->PID);
+                    char* mensaje_cpu = "DESALOJAR";
+
+                    enviar_mensaje(mensaje_cpu, cpu_buscada->socket_interrupt, log_kernel);
+                    sem_wait(&proceso_desalojado);
+                    cambio_estado_execute(cpu_buscada, proceso);
+                }
+
+            }
+            sem_post(&semaforo_cpu);
+        }
+
+    }
+   
 }
 
 
@@ -796,7 +859,9 @@ int main(int argc, char* argv[]) {
     sem_init(&procesos_bloqueados, 1, 0);
 
     sem_init(&cpu_disponibles, 1, 0);
-
+    sem_init(&proceso_desalojado, 1, 0);
+    sem_init(&memoria__ocupada, 0, 1);
+    sem_init(&procesos_listos, 1, 0);
 
     //Kernel "Core" 10/10 Joke
     config_kernel = iniciar_config("kernel");
