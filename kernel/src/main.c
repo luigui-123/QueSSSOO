@@ -140,7 +140,7 @@ void syscall_init_procc(char* tamanio, char* nombre)
 
 
 
-    log_info(log_kernel, ("%d Se crea el proceso - Estado: NEW", proceso_nuevo->PID));
+    log_info(log_kernel, "%d Se crea el proceso - Estado: NEW", proceso_nuevo->PID);
     
     sem_post(&semaforo_new);
     sem_post(&procesos_creados);
@@ -270,10 +270,10 @@ void planificador_io(struct io* io_asociada)
 
 
         //Verificar si esta en BLOQUED y suspendend blocked
-        log_info(log_kernel, ("%d - Finalizo IO y pasa a READY", proceso->PID));
 
         sem_wait(&semaforo_bloqued);
         struct pcb* proceso = encontrar_proceso_especifico(lista_bloqued, peticion->pid);
+        log_info(log_kernel, "%d - Finalizo IO y pasa a READY", proceso->PID);
         if (proceso != NULL)
         {
             list_remove_element ((t_list*)lista_bloqued, proceso);
@@ -283,7 +283,7 @@ void planificador_io(struct io* io_asociada)
                 proceso->MT[3] = temporal_gettime(proceso->tiempo_estado);
                 proceso->tiempo_estado = temporal_create();
             
-            log_info(log_kernel, ("%d - Pasa del estado Bloqueado al Estado Ready", proceso->PID));
+            log_info(log_kernel, "%d - Pasa del estado Bloqueado al Estado Ready", proceso->PID);
 
             cambio_estado_ready(proceso);
             
@@ -301,7 +301,7 @@ void planificador_io(struct io* io_asociada)
                 temporal_stop(proceso->tiempo_estado);
                 proceso->MT[3] = temporal_gettime(proceso->tiempo_estado);
                 proceso->tiempo_estado = temporal_create();
-            log_info(log_kernel, ("%d - Pasa del estado Suspendido Bloqueado al Estado Ready", proceso->PID));
+            log_info(log_kernel, "%d - Pasa del estado Suspendido Bloqueado al Estado Ready", proceso->PID);
         }
         
         sem_post((&semaforo_bloqued));
@@ -402,7 +402,7 @@ void cronometrar_proceso(struct pcb* proceso)
         temporal_stop(proceso->tiempo_estado);
         proceso->MT[3] += temporal_gettime(proceso->tiempo_estado);
         proceso->tiempo_estado = temporal_create();
-        log_info(log_kernel, ("%d - Pasa del estado Bloqueado al Estado Bloqueado suspendido", proceso->PID));
+        log_info(log_kernel, "%d - Pasa del estado Bloqueado al Estado Bloqueado suspendido", proceso->PID);
 
         suspender_proceso(proceso);
     }
@@ -449,7 +449,7 @@ void cambio_estado_bloqued(int pid, int pc)
     proceso_a_bloquear->PC = pc;
 
     proceso_a_bloquear->ME[3] += 1;
-    proceso_a_bloquear->tiempo_estado = temporal_stop();
+    temporal_stop(proceso_a_bloquear->tiempo_estado);
     proceso_a_bloquear->MT[2] += temporal_gettime(proceso_a_bloquear->tiempo_estado);
     proceso_a_bloquear->tiempo_estado = temporal_create();
 
@@ -466,7 +466,7 @@ void cambio_estado_exit(int pid)
     list_remove_element ((t_list*)lista_execute, proceso_a_terminar);
     sem_post(&semaforo_execute); 
     proceso_a_terminar->ME[6] += 1;
-    proceso_a_terminar->tiempo_estado = temporal_stop();
+    temporal_stop(proceso_a_terminar->tiempo_estado);
     proceso_a_terminar->MT[2] += temporal_gettime(proceso_a_terminar->tiempo_estado);
     proceso_a_terminar->tiempo_estado = temporal_create();
 
@@ -485,9 +485,9 @@ void cambio_estado_exit(int pid)
     enviar_paquete(paquete_proceso_terminado, conexion_memoria, log_kernel);
 
 
-    sem_post(memoria__ocupada);
+    sem_post(&memoria__ocupada);
     
-    log_info(log_kernel, ("%d - Finaliza el proceso", pid));
+    log_info(log_kernel, "%d - Finaliza el proceso", pid);
 
     queue_push(lista_finished, proceso_a_terminar);
 
@@ -533,9 +533,9 @@ void planifacion_largo_plazo()
                 sem_post(&semaforo_ready_sus);
                 
                             
-                log_info(log_kernel, ("%d - Pasa del estado Suspended Ready al Estado Ready", proceso->PID));
+                log_info(log_kernel, "%d - Pasa del estado Suspended Ready al Estado Ready", proceso->PID);
                 proceso->ME[1] += 1;
-                proceso->tiempo_estado = temporal_stop();
+                temporal_stop(proceso->tiempo_estado);
                 proceso->MT[5] += temporal_gettime(proceso->tiempo_estado);
                 proceso->tiempo_estado = temporal_create();
 
@@ -561,11 +561,11 @@ void planifacion_largo_plazo()
             {
                 sem_post(&semaforo_new);
                 proceso->ME[1] += 1;
-                proceso->tiempo_estado = temporal_stop();
+                temporal_stop(proceso->tiempo_estado);
                 proceso->MT[0] += temporal_gettime(proceso->tiempo_estado);
                 proceso->tiempo_estado = temporal_create();
 
-                log_info(log_kernel, ("%d - Pasa del estado New al Estado Ready", proceso->PID));
+                log_info(log_kernel, "%d - Pasa del estado New al Estado Ready", proceso->PID);
 
                 cambio_estado_ready(proceso); //Y algo mas...
             }
@@ -591,11 +591,11 @@ void planifacion_largo_plazo()
             {
                 sem_post(&semaforo_ready_sus);
                 proceso->ME[1] += 1;
-                proceso->tiempo_estado = temporal_stop();
+                temporal_stop(proceso->tiempo_estado);
                 proceso->MT[5] += temporal_gettime(proceso->tiempo_estado);
                 proceso->tiempo_estado = temporal_create();
 
-                log_info(log_kernel, ("%d - Pasa del estado Suspended Ready al Estado Ready", proceso->PID));
+                log_info(log_kernel, "%d - Pasa del estado Suspended Ready al Estado Ready", proceso->PID);
 
                 cambio_estado_ready(proceso); //Y algo mas...
             }
@@ -618,11 +618,11 @@ void planifacion_largo_plazo()
             {
                 sem_post(&semaforo_ready);
                 proceso->ME[1] += 1;
-                proceso->tiempo_estado = temporal_stop();
+                temporal_stop(proceso->tiempo_estado);
                 proceso->MT[0] += temporal_gettime(proceso->tiempo_estado);
                 proceso->tiempo_estado = temporal_create();
 
-                log_info(log_kernel, ("%d - Pasa del estado New al Estado Ready", proceso->PID));
+                log_info(log_kernel, "%d - Pasa del estado New al Estado Ready", proceso->PID);
 
                 cambio_estado_ready(proceso); //Y algo mas...
             }
@@ -679,10 +679,10 @@ void* escucha_cpu_especifica(void* cpu)
             //revisar para Listas.
             //ESto mandarlo a Execute -> Exit
 
-            log_info(log_kernel, ("%d - solicitó syscall: Exit", pid_proceso_usado)); //Proceso para enviar metricas
+            log_info(log_kernel, "%d - solicitó syscall: Exit", pid_proceso_usado); //Proceso para enviar metricas
             sem_post(&semaforo_new);
 
-            log_info(log_kernel, ("%d - Pasa del estado Execute al Estado Exit", pid_proceso_usado));
+            log_info(log_kernel, "%d - Pasa del estado Execute al Estado Exit", pid_proceso_usado);
             cambio_estado_exit(pid_proceso_usado);
             cpu_especifica->ocupado=0;
             
@@ -691,14 +691,14 @@ void* escucha_cpu_especifica(void* cpu)
         }
         else if (*((int*)list_get(paquete_recibido, 0)) ==  1) //Init
         {
-            log_info(log_kernel, ("%d - solicitó syscall: Init Procc", pid_proceso_usado));
+            log_info(log_kernel, "%d - solicitó syscall: Init Procc", pid_proceso_usado);
             syscall_init_procc(list_get(paquete_recibido, 3), list_get(paquete_recibido, 4));
             //Meter mensaje a CPU
             
         }
         else if (list_get(paquete_recibido, 0) ==  2) //Dump
         {
-            log_info(log_kernel, ("%d - solicitó syscall: Dump Memory", pid_proceso_usado));
+            log_info(log_kernel, "%d - solicitó syscall: Dump Memory", pid_proceso_usado);
             temporal_stop(rafaga_real_actual);
 
             int tiempo_real = temporal_gettime(rafaga_real_actual);
@@ -706,7 +706,7 @@ void* escucha_cpu_especifica(void* cpu)
             
             actualizar_rafaga(pid_proceso_usado, tiempo_real);
 
-            log_info(log_kernel, ("%d - Pasa del estado Execute al Estado Bloquedo", pid_proceso_usado));
+            log_info(log_kernel, "%d - Pasa del estado Execute al Estado Bloquedo", pid_proceso_usado);
 
             cambio_estado_bloqued(pid_proceso_usado, pc_proceso_usado);
             pthread_t dump_proceso;
@@ -719,7 +719,7 @@ void* escucha_cpu_especifica(void* cpu)
         }
         else if (list_get(paquete_recibido, 0) ==  3) //IO
         {
-            log_info(log_kernel, ("%d - solicitó syscall: IO", pid_proceso_usado));
+            log_info(log_kernel, "%d - solicitó syscall: IO", pid_proceso_usado);
 
 
             temporal_stop(rafaga_real_actual);
@@ -732,7 +732,7 @@ void* escucha_cpu_especifica(void* cpu)
             struct io* dispositivo_necesitado = encontrar_io_especifico(lista_io, (char*)list_get(paquete_recibido, 3));
             if (!dispositivo_necesitado)
             {
-                log_info(log_kernel, ("%d - Pasa del estado Execute al Estado Exit", pid_proceso_usado));
+                log_info(log_kernel, "%d - Pasa del estado Execute al Estado Exit", pid_proceso_usado);
 
                 cambio_estado_exit(pid_proceso_usado);
 
@@ -741,8 +741,8 @@ void* escucha_cpu_especifica(void* cpu)
             {
 
                 struct peticion_io* peticion = malloc(sizeof(struct peticion_io)); 
-                log_info(log_kernel, ("%d - Bloqueado por IO: %s", pid_proceso_usado, dispositivo_necesitado->nombre));
-                log_info(log_kernel, ("%d - Pasa del estado Execute al Estado Bloquedo", pid_proceso_usado));
+                log_info(log_kernel, "%d - Bloqueado por IO: %s", pid_proceso_usado, dispositivo_necesitado->nombre);
+                log_info(log_kernel, "%d - Pasa del estado Execute al Estado Bloquedo", pid_proceso_usado);
 
                 peticion->tiempo = *((int*)list_get(paquete_recibido, 4));
                 peticion->io_asociada = dispositivo_necesitado;
@@ -765,7 +765,7 @@ void* escucha_cpu_especifica(void* cpu)
         }
         else if (list_get(paquete_recibido, 0) ==  4) //Desalojo
         {
-            log_info(log_kernel, ("%d - solicitó syscall: Desalojo", pid_proceso_usado));
+            log_info(log_kernel, "%d - solicitó syscall: Desalojo", pid_proceso_usado);
 
             temporal_stop(rafaga_real_actual);
 
@@ -773,9 +773,9 @@ void* escucha_cpu_especifica(void* cpu)
                 
             actualizar_rafaga(pid_proceso_usado, tiempo_real);
             struct pcb* proceso_a_desalojar = encontrar_proceso_especifico(lista_execute, pid_proceso_usado);
-            log_info(log_kernel, ("%d - Desalojado por algoritmo SJF/SRT", pid_proceso_usado));
+            log_info(log_kernel, "%d - Desalojado por algoritmo SJF/SRT", pid_proceso_usado);
 
-            log_info(log_kernel, ("%d - Pasa del estado Execute al Estado Ready", pid_proceso_usado));
+            log_info(log_kernel, "%d - Pasa del estado Execute al Estado Ready", pid_proceso_usado);
 
             cambio_estado_ready(proceso_a_desalojar);
             
@@ -802,7 +802,7 @@ void cambio_estado_execute(struct Cpu* cpu, struct pcb* proceso)
     queue_push(lista_execute, proceso);
     sem_post(&semaforo_execute); 
     //mutex
-    log_info(log_kernel, ("%d - Pasa del estado Execute al Estado Ready", proceso->PID));
+    log_info(log_kernel, "%d - Pasa del estado Execute al Estado Ready", proceso->PID);
 
     proceso->ME[2] += 1;
     temporal_stop(proceso->tiempo_estado);
