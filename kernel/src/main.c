@@ -281,7 +281,7 @@ void planificador_io(struct io* io_asociada)
                 proceso->ME[1] += 1;
                 temporal_stop(proceso->tiempo_estado);
                 proceso->MT[3] = temporal_gettime(proceso->tiempo_estado);
-                temporal_resume(proceso->tiempo_estado);
+                proceso->tiempo_estado = temporal_create();
             
             log_info(log_kernel, ("%d - Pasa del estado Bloqueado al Estado Ready", proceso->PID));
 
@@ -300,8 +300,7 @@ void planificador_io(struct io* io_asociada)
                 proceso->ME[5] += 1;
                 temporal_stop(proceso->tiempo_estado);
                 proceso->MT[3] = temporal_gettime(proceso->tiempo_estado);
-                temporal_resume(proceso->tiempo_estado);
-
+                proceso->tiempo_estado = temporal_create();
             log_info(log_kernel, ("%d - Pasa del estado Suspendido Bloqueado al Estado Ready", proceso->PID));
         }
         
@@ -392,9 +391,9 @@ void suspender_proceso(struct pcb* proceso)
 
 void cronometrar_proceso(struct pcb* proceso)
 {
-    t_temporal * cronometro = temporal_create();
-    
-    usleep(50000);
+    useconds_t tiempo = (config_get_int_value(config_kernel, "TIEMPO_SUSPENSION") / 1000);
+
+    usleep(tiempo);
 
 
     if (encontrar_proceso_especifico(lista_bloqued, proceso->PID))
@@ -402,7 +401,7 @@ void cronometrar_proceso(struct pcb* proceso)
         proceso->ME[4] += 1;
         temporal_stop(proceso->tiempo_estado);
         proceso->MT[3] += temporal_gettime(proceso->tiempo_estado);
-        temporal_resume(proceso->tiempo_estado);
+        proceso->tiempo_estado = temporal_create();
         log_info(log_kernel, ("%d - Pasa del estado Bloqueado al Estado Bloqueado suspendido", proceso->PID));
 
         suspender_proceso(proceso);
@@ -452,8 +451,7 @@ void cambio_estado_bloqued(int pid, int pc)
     proceso_a_bloquear->ME[3] += 1;
     proceso_a_bloquear->tiempo_estado = temporal_stop();
     proceso_a_bloquear->MT[2] += temporal_gettime(proceso_a_bloquear->tiempo_estado);
-    temporal_resume(proceso_a_bloquear->tiempo_estado);
-
+    proceso_a_bloquear->tiempo_estado = temporal_create();
 
     sem_wait(&semaforo_bloqued); 
     queue_push(lista_bloqued, proceso_a_bloquear);
@@ -470,8 +468,9 @@ void cambio_estado_exit(int pid)
     proceso_a_terminar->ME[6] += 1;
     proceso_a_terminar->tiempo_estado = temporal_stop();
     proceso_a_terminar->MT[2] += temporal_gettime(proceso_a_terminar->tiempo_estado);
-    temporal_resume(proceso_a_terminar->tiempo_estado);
-    
+    proceso_a_terminar->tiempo_estado = temporal_create();
+
+
     int conexion_memoria = peticion_memoria();
     
     t_paquete* paquete_proceso_terminado = crear_paquete();
@@ -538,7 +537,8 @@ void planifacion_largo_plazo()
                 proceso->ME[1] += 1;
                 proceso->tiempo_estado = temporal_stop();
                 proceso->MT[5] += temporal_gettime(proceso->tiempo_estado);
-                temporal_resume(proceso->tiempo_estado);
+                proceso->tiempo_estado = temporal_create();
+
                 cambio_estado_ready(proceso); //Y algo mas...
                 
             }
@@ -563,7 +563,7 @@ void planifacion_largo_plazo()
                 proceso->ME[1] += 1;
                 proceso->tiempo_estado = temporal_stop();
                 proceso->MT[0] += temporal_gettime(proceso->tiempo_estado);
-                temporal_resume(proceso->tiempo_estado);
+                proceso->tiempo_estado = temporal_create();
 
                 log_info(log_kernel, ("%d - Pasa del estado New al Estado Ready", proceso->PID));
 
@@ -593,7 +593,7 @@ void planifacion_largo_plazo()
                 proceso->ME[1] += 1;
                 proceso->tiempo_estado = temporal_stop();
                 proceso->MT[5] += temporal_gettime(proceso->tiempo_estado);
-                temporal_resume(proceso->tiempo_estado);
+                proceso->tiempo_estado = temporal_create();
 
                 log_info(log_kernel, ("%d - Pasa del estado Suspended Ready al Estado Ready", proceso->PID));
 
@@ -620,7 +620,7 @@ void planifacion_largo_plazo()
                 proceso->ME[1] += 1;
                 proceso->tiempo_estado = temporal_stop();
                 proceso->MT[0] += temporal_gettime(proceso->tiempo_estado);
-                temporal_resume(proceso->tiempo_estado);
+                proceso->tiempo_estado = temporal_create();
 
                 log_info(log_kernel, ("%d - Pasa del estado New al Estado Ready", proceso->PID));
 
@@ -807,7 +807,7 @@ void cambio_estado_execute(struct Cpu* cpu, struct pcb* proceso)
     proceso->ME[2] += 1;
     temporal_stop(proceso->tiempo_estado);
     proceso->MT[1] = temporal_gettime(proceso->tiempo_estado);
-    temporal_resume(proceso->tiempo_estado);
+    proceso->tiempo_estado = temporal_create();
 
 
     cpu->proceso = proceso;
