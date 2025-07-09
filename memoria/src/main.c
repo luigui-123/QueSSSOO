@@ -156,7 +156,8 @@ t_list *generarTablaTamaño(int tam)
 
     for (int i = 0; i < tam / TAM_PAGINA; i++)
     {
-        int puntero = Asociar_Proceso_a_Marco(); // obtenerDireccion();
+        int *puntero = malloc(sizeof(int));
+        *puntero = Asociar_Proceso_a_Marco(); // obtenerDireccion();
         list_add(listaPaginas, puntero);
     }
 
@@ -201,8 +202,9 @@ t_list *reasignar_tabla(int tam, FILE *swap)
 
     for (int i = 0; i < tam / TAM_PAGINA; i++)
     {
-        int puntero = Asociar_Proceso_a_Marco(); // obtenerDireccion();
-        fread(MEMORIA_USUARIO + (puntero * TAM_PAGINA), sizeof(char) * TAM_PAGINA, 1, swap);
+        int *puntero = malloc(sizeof(int)); // TODO Falta liberar este coso horroro de acá
+        *puntero = Asociar_Proceso_a_Marco(); // obtenerDireccion();
+        fread(MEMORIA_USUARIO + ((*puntero) * TAM_PAGINA), sizeof(char) * TAM_PAGINA, 1, swap);
         // log_trace(log_memo,"se reescribio el marco %d",puntero);
         list_add(listaPaginas, puntero);
     }
@@ -344,8 +346,8 @@ void liberar(t_list *tabla, int nivel_actual, int nivel_max)
 {
     if (!tabla)
         return;
-
-    for (int i = 0; i < list_size(tabla); i++)
+    int tam_tabla=list_size(tabla);
+    for (int i = 0; i < tam_tabla; i++)
     {
         t_list *elemento = list_get(tabla, i);
         if (nivel_actual < nivel_max)
@@ -358,10 +360,12 @@ void liberar(t_list *tabla, int nivel_actual, int nivel_max)
             // Último nivel: liberar punteros individuales
             while (0 < list_size(elemento))
             {
-                Liberar_Proceso_de_Marco(list_remove(elemento, 0));
+                int * puntero = list_remove(elemento, 0);
+                Liberar_Proceso_de_Marco(*puntero);
+                free(puntero);
             }
-
-            free(elemento);
+            list_destroy(elemento);
+            //free(elemento);
         }
     }
     list_destroy(tabla); // libera solo la lista (no los elementos, ya fueron)
@@ -446,13 +450,14 @@ void tabla_a_archivo(t_list *tabla, int nivel_actual, int nivel_max, FILE *swap)
         {
             while (0 < list_size(elemento))
             {
-                int pag = list_remove(elemento, 0);
+                int *pag = list_remove(elemento, 0);
                 // log_trace(log_memo,"se guardo el marco %d",pag);  // REEMPLAZAR POR PAG EN LUGAR DE INT
-                fwrite(MEMORIA_USUARIO + (pag * TAM_PAGINA), sizeof(char) * TAM_PAGINA, 1, swap);
-                Liberar_Proceso_de_Marco(pag);
+                fwrite(MEMORIA_USUARIO + ((*pag) * TAM_PAGINA), sizeof(char) * TAM_PAGINA, 1, swap);
+                Liberar_Proceso_de_Marco(*pag);
+                free(pag);
             }
 
-            free(elemento);
+            list_destroy(elemento);
         }
     }
     list_destroy(tabla); // libera solo la lista (no los elementos, ya fueron)
@@ -468,12 +473,12 @@ void suspender(int i)
     FILE *swap;
     if (swap = fopen(PATH_SWAPFILE, "ab"))
     {
+        usleep(RETARDO_SWAP * 100);
         // log_trace(log_memo,"archivo abierto escritura");
         fwrite(&PID, sizeof(int), 1, swap);
         fwrite(&tam, sizeof(int), 1, swap);
         tabla_a_archivo(proceso->Tabla_Pag, 1, CANTIDAD_NIVELES, swap);
         fclose(swap);
-        usleep(RETARDO_SWAP * 100);
         TAM_MEMORIA_ACTUAL += tam;
     }
     return;
@@ -492,31 +497,42 @@ void desuspender(int i)
         TAM_MEMORIA_ACTUAL -= proceso->tamanio;
         int PID = -1, tam;
         FILE *swap;
-        if (swap = fopen(PATH_SWAPFILE, "rb"))
+        FILE *reemplazo;
+        if ((swap = fopen(PATH_SWAPFILE, "rb"))&&(reemplazo = fopen("reemplazo", "wb")))
         {
             // log_trace(log_memo,"archivo abierto lectura");
-
+            usleep(RETARDO_SWAP * 100);
             // WHILE CON EOF
             while (!feof(swap))
             {
-                usleep(RETARDO_SWAP * 100);
+                
                 fread(&PID, sizeof(int), 1, swap);
                 fread(&tam, sizeof(int), 1, swap);
                 if (PID == i)
                 {
-                    // liberar(proceso->Tabla_Pag,1,CANTIDAD_NIVELES);
-                    proceso->Tabla_Pag = reasignar_tabla(tam, swap);
+                    liberar(proceso->Tabla_Pag,1,CANTIDAD_NIVELES);
+                    proceso->Tabla_Pag = reasignar_tabla(tam, swap); // READ que adelanta
                     proceso->bajadaSWAP += 1;
                     proceso->subidasMemo += 1;
-                    break;
+                    //break;
                 }
                 else
                 {
-                    fseek(swap, sizeof(char) * TAM_PAGINA * (tam / TAM_PAGINA), SEEK_CUR);
+                    fwrite(&PID,sizeof(int),1,reemplazo);
+                    fwrite(&tam,sizeof(int),1,reemplazo);
+                    char * cad_remp=malloc(sizeof(char)*tam);
+                    fread(cad_remp, sizeof(char) * tam, 1, swap);
+                    fwrite(cad_remp, sizeof(char) * tam, 1, reemplazo);
+                    log_trace(log_memo, "el contenido del proceso %d es %s", PID,cad_remp);
+                    free(cad_remp);
+                    //fseek(swap, sizeof(char) * TAM_PAGINA * (tam / TAM_PAGINA), SEEK_CUR);
                     log_trace(log_memo, "Se omitio el proceso %d", PID);
                 }
             }
+            fclose(reemplazo);
             fclose(swap);
+            remove(PATH_SWAPFILE);
+            rename("reemplazo",PATH_SWAPFILE);
         }
     }
     return;
@@ -545,8 +561,8 @@ void acceso_tabla_paginas(t_list *tabla, int pag[], int nivel_actual, int *acces
             /*for(int i=0;i<list_size(tabla);i++){
                 log_trace(log_memo, "el marco es %d", list_get(tabla, i));
             }*/
-            int marco = list_get(tabla, pag[nivel_actual - 1]);
-            log_trace(log_memo, "el marco es %d", marco);
+            int *marco = list_get(tabla, pag[nivel_actual - 1]);
+            log_trace(log_memo, "el marco es %d", *marco);
             // Enviar marco
 
             return;
@@ -619,8 +635,8 @@ void dumpeo(t_list *tabla, int nivel_actual, int nivel_max, FILE *dump)
             int inc = 0;
             while (inc < list_size(elemento))
             {
-                int pag = list_get(elemento, inc);
-                fwrite(MEMORIA_USUARIO + (pag * TAM_PAGINA), sizeof(char) * TAM_PAGINA, 1, dump);
+                int *pag = list_get(elemento, inc);
+                fwrite(MEMORIA_USUARIO + ((*pag) * TAM_PAGINA), sizeof(char) * TAM_PAGINA, 1, dump);
                 inc++;
             }
         }
@@ -659,6 +675,7 @@ void leer_pag_por_tam(int pro,int marco, int tam)
         //log_trace(log_memo, "Se pide enviar la cadena %s", cadena);
         proceso->cantLecturas++;
         log_trace(log_memo,"## PID: %d - Lectura - Dir. Física: %d - Tamaño: %d", proceso->PID,(MEMORIA_USUARIO + (marco * TAM_PAGINA)),tam);
+        log_trace(log_memo,"## PID: %d - Lectura - Dir. Física: %s - Tamaño: %d", proceso->PID,(MEMORIA_USUARIO + (marco * TAM_PAGINA)),tam);
         free(cadena);
     }
     return;
@@ -724,39 +741,42 @@ int main(int argc, char *argv[])
     posicion[1] = 0;
     posicion[2] = 1;
 
-    // acceder_a_marco(num_proceso , [posiciones_de_tabla]);
+    //      acceder_a_marco(num_proceso , [posiciones_de_tabla]);
     acceder_a_marco(2,posicion);
     free(posicion);
     
-    // actualizar_pag_completa(numero_proceso , marco_a_escribir , tamaño_a_escribir , "mensaje");
+    //      actualizar_pag_completa(numero_proceso , marco_a_escribir , tamaño_a_escribir , "mensaje");
     //log_trace(log_memo,"qwertyuiopasdfghjklñzxcvbnmqwertyuiopasdfghjklñzxcvbnmqwertyuiop");
-    actualizar_pag_completa(1,0, 64, "qwertyuiopasdfghjklnzxcvbnmqwertyuiopasdfghjklnzxcvbnmqwertyuiop");
-    actualizar_pag_completa(1,1, 16, "me_gusta_la_papa");
+    //actualizar_pag_completa(1,0, 64, "qwertyuiopasdfghjklnzxcvbnmqwertyuiopasdfghjklnzxcvbnmqwertyuiop");
+    actualizar_pag_completa(1,0, 16, "soy_el_proceso_1");
+    actualizar_pag_completa(1,1, 16, "soy_el_proceso_1");
+    actualizar_pag_completa(2,3, 16, "soy_el_proceso_2");
 
-    // leer_pag_entera(numero_proceso , marco_a_leer);
-    leer_pag_entera(1,0);
-    leer_pag_entera(1,1);
+    //      leer_pag_entera(numero_proceso , marco_a_leer);
+    //leer_pag_entera(1,0);
+    //leer_pag_entera(1,1);
 
-    // leer_pag_por_tam(numero_proceso , marco_a_leer , tamaño_a_leer);
+    //      eer_pag_por_tam(numero_proceso , marco_a_leer , tamaño_a_leer);
     leer_pag_por_tam(1,0,12);
-    leer_pag_por_tam(1,0,12);
-    leer_pag_por_tam(1,0,45);
+    //leer_pag_por_tam(1,0,45);
 
-    // dump_memory(numero_proceso_a_dumpear);
+    //      dump_memory(numero_proceso_a_dumpear);
     dump_memory(1);
+    dump_memory(2);
 
-    // suspender(numero_proceso_a_suspender);
-    suspender(1);
+    //      suspender(numero_proceso_a_suspender);
+    //suspender(1);
     //suspender(2);
 
-    // desuspender(numero_proceso_a_desuspender);
-    desuspender(1);
+    //      desuspender(numero_proceso_a_desuspender);
+    //desuspender(1);
     //desuspender(2);
 
-    // enviar_instruccion(numero_de_proceso , numero_instruccion);
+    //      enviar_instruccion(numero_de_proceso , numero_instruccion);
     enviar_instruccion(1, 3);
-
-    // eliminar_proceso(numero_proceso);
+//dump_memory(1);
+//dump_memory(2);
+    //      eliminar_proceso(numero_proceso);
     eliminar_proceso(1);
     eliminar_proceso(2);
 
@@ -780,8 +800,10 @@ int main(int argc, char *argv[])
     log_destroy(log_memo);
     free(bitmap);
     free(MEMORIA_USUARIO);
+
     return 0;
 }
+
 
     return 0;
 }
