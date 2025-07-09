@@ -7,6 +7,8 @@
 #include <unistd.h>
 #include <stdbool.h>
 #include <utils/hello.h>
+#include <pthread.h>
+#include <semaphore.h>
 
 //algunas variables globales
 #define TAMANIO_PAGINA 64
@@ -39,6 +41,13 @@ typedef struct
     int pid;
     int direccion;
 } memoriainfo;
+
+typedef struct 
+{
+    int conexion;
+    t_log* log;
+} infohilointerrupcion;
+
 
 typedef struct {
     int nivel_1;
@@ -349,6 +358,28 @@ int traducir_direccion (int direccion_logica, int conexion_memoria,cpuinfo *proc
 
 }
 
+sem_t mutex_interrupcion;
+bool interrupcion_conexion = false;
+
+void escuchar_conexion_interrupt(void *arg){
+    infohilointerrupcion *datos = (infohilointerrupcion *) arg;
+    while(1){
+        char* mensaje = recibir_mensaje(datos->conexion, datos->log);
+        if(mensaje == "DESALOJAR")
+            sem_wait(&mutex_interrupcion);
+            interrupcion_conexion = true;
+            sem_post(&mutex_interrupcion);
+        }
+    return;
+}
+
+bool check_interrupt(bool interrupcion){
+    if(interrupcion_conexion){
+        interrupcion_conexion = false;
+        return true;
+    }
+    return interrupcion;
+}
 
 
 int main(char* id_cpu) 
@@ -391,6 +422,13 @@ int main(char* id_cpu)
     t_list *proceso;
     char *instruccion;
     bool interrupcion;
+    infohilointerrupcion *conexion_interrumpir = malloc(sizeof(infohilointerrupcion));
+    conexion_interrumpir->conexion = conexion_kernel_interrupt;
+    conexion_interrumpir->log = log_cpu;
+    sem_init(&mutex_interrupcion, 0, 1);
+    pthread_t hiloInterrupcion;
+    pthread_create(&hiloInterrupcion, NULL, escuchar_conexion_interrupt, (void *) conexion_interrumpir);
+    pthread_detach(hiloInterrupcion);
 
     //while (cpu conectada){
         proceso = recibir_procesos(conexion_kernel_dispatch, id_cpu);
@@ -403,22 +441,23 @@ int main(char* id_cpu)
         do{
             instruccion = obtener_instruccion(procesocpu, conexion_memoria, log_cpu);
             decodear_y_ejecutar_instruccion(instruccion, procesocpu, conexion_memoria, conexion_kernel_dispatch, log_cpu, &interrupcion);
-            //interrupcion = check_interrupt()
+            sem_wait(&mutex_interrupcion);
+            interrupcion = check_interrupt(interrupcion);
+            sem_post(&mutex_interrupcion);
         }while(!interrupcion);
         t_paquete *paquete = crear_paquete();
         agregar_a_paquete(paquete, procesocpu, sizeof(cpuinfo));
         enviar_paquete(paquete, conectar_kernel_dispatch, log_cpu);
-        free(procesocpu);
 
         //En caso de desalojo enviar cambios de la cache a memoria si hubo modificaciones
         if(se_modifico_cache(cache))
         {
            enviar_cambios_memoria(cache,conexion_memoria,procesocpu,tlb,log_cpu); 
         }
+        free(procesocpu);
         //y vaciar cache y tlb
         inicializar_cache(cache);
         inicializar_tlb (tlb);
-
         
     //}
 
