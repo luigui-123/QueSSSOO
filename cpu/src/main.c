@@ -365,6 +365,7 @@ void escuchar_conexion_interrupt(void *arg){
     infohilointerrupcion *datos = (infohilointerrupcion *) arg;
     while(1){
         char* mensaje = recibir_mensaje(datos->conexion, datos->log);
+        log_info(datos->log, "Llega interrupcion al puerto Interrupt");
         if(mensaje == "DESALOJAR")
             sem_wait(&mutex_interrupcion);
             interrupcion_conexion = true;
@@ -482,6 +483,7 @@ t_list *recibir_procesos(int conexion, t_log *log_cpu)
 
 char *obtener_instruccion(cpuinfo *procesocpu, int conexion_memoria, t_log *log_cpu)
 {
+    log_info(log_cpu, "PID: ", procesocpu->pid, " - FETCH - Program Counter: ", procesocpu->pc);
     char * instruccion;
     t_paquete *paquete = crear_paquete();
     agregar_a_paquete(paquete, procesocpu, sizeof(cpuinfo));
@@ -498,6 +500,8 @@ void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, int co
     
     char **instruccion_separada = string_split(instruccion, " ");
     string_to_upper(instruccion_separada[0]);
+    char *parametros = strcat(instruccion_separada[1], " ", instruccion_separada[2]);
+    log_info(log_cpu, "PID: ", proceso->pid, " - Ejecutando: ", instruccion_separada[0], " - ", parametros);
     if(instruccion_separada[0] == "WRITE"){
 
         int direccion_logica = atoi(instruccion_separada[1]);
