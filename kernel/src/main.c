@@ -241,6 +241,8 @@ void* encontrar_proceso_pequeño(void* elemento, void* elemento2)
     return proceso1->tamanio < proceso2->tamanio ? proceso1 : proceso2;
 }
 
+
+
 void planificador_io(struct io* io_asociada)
 {
     while (1)
@@ -258,50 +260,110 @@ void planificador_io(struct io* io_asociada)
         free(puntero_pid);
 
 
-        recibir_paquete(peticion->io_asociada->socket_io, log_kernel); //O mensaje, no se xd
+        if (recibir_mensaje(peticion->io_asociada->socket_io, log_kernel) == "Fin de IO") //O mensaje, no se xd
+        {     
+            sem_wait(&semaforo_bloqued);
+            struct pcb* proceso = encontrar_proceso_especifico(lista_bloqued, peticion->pid);
+            log_trace(log_kernel, "%d - Finalizo IO y pasa a READY", proceso->PID);
+            if (proceso != NULL)
+            {
+                list_remove_element ((t_list*)lista_bloqued, proceso);
 
+                    proceso->ME[1] += 1;
+                    temporal_stop(proceso->tiempo_estado);
+                    proceso->MT[3] = temporal_gettime(proceso->tiempo_estado);
+                    proceso->tiempo_estado = temporal_create();
+                
+                log_trace(log_kernel, "%d - Pasa del estado Bloqueado al Estado Ready", proceso->PID);
+
+                cambio_estado_ready(proceso);
+                
+            }
+            else
+            {
+                sem_wait(&semaforo_bloqued_sus);
+                proceso = encontrar_proceso_especifico(lista_sus_bloqued, peticion->pid);
+                list_remove_element ((t_list*)lista_sus_bloqued, proceso);
+
+                queue_push(lista_sus_ready, proceso);
+                sem_post(&semaforo_bloqued_sus);
+
+                    proceso->ME[5] += 1;
+                    temporal_stop(proceso->tiempo_estado);
+                    proceso->MT[3] = temporal_gettime(proceso->tiempo_estado);
+                    proceso->tiempo_estado = temporal_create();
+                log_trace(log_kernel, "%d - Pasa del estado Suspendido Bloqueado al Estado Ready", proceso->PID);
+            }
+            
+            sem_post((&semaforo_bloqued));
+
+
+            free(peticion);
+            peticion=NULL;
+        }
+        else if (recibir_mensaje(peticion->io_asociada->socket_io, log_kernel) == "DesconectarIO")
+        {
+            struct pcb* proceso = encontrar_proceso_especifico(lista_bloqued, peticion->pid);
+
+            if (proceso != NULL)
+            {
+                sem_wait(&semaforo_bloqued);
+                list_remove_element ((t_list*)lista_bloqued, proceso);
+                sem_post(&semaforo_bloqued); 
+                temporal_stop(proceso->tiempo_estado);
+
+                proceso->MT[3] += temporal_gettime(proceso->tiempo_estado);
+                proceso->tiempo_estado = temporal_create();
+            }
+            else
+            {
+                sem_wait(&semaforo_bloqued_sus);
+                list_remove_element ((t_list*)lista_sus_bloqued, proceso);
+                sem_post(&semaforo_bloqued_sus); 
+                temporal_stop(proceso->tiempo_estado);
+
+                proceso->MT[4] += temporal_gettime(proceso->tiempo_estado);
+                proceso->tiempo_estado = temporal_create();
+            }
+            cambio_estado_exit(proceso);
+            
+            if (list_size(io_asociada->espera) >= 1)
+            {
+                for (int i=0; i<list_size(io_asociada->espera); i++)
+                {
+                    struct pcb* proceso_a_terminar = encontrar_proceso_especifico(lista_bloqued, peticion->pid);
+                    if (proceso_a_terminar != NULL)
+                    {
+                        sem_wait(&semaforo_bloqued);
+                        list_remove_element ((t_list*)lista_bloqued, proceso_a_terminar);
+                        sem_post(&semaforo_bloqued); 
+                        temporal_stop(proceso_a_terminar->tiempo_estado);
+
+                        proceso_a_terminar->MT[3] += temporal_gettime(proceso_a_terminar->tiempo_estado);
+                        proceso_a_terminar->tiempo_estado = temporal_create();
+                    }
+                    else
+                    {
+                        sem_wait(&semaforo_bloqued_sus);
+                        list_remove_element ((t_list*)lista_sus_bloqued, proceso_a_terminar);
+                        sem_post(&semaforo_bloqued_sus); 
+                        temporal_stop(proceso_a_terminar->tiempo_estado);
+
+                        proceso_a_terminar->MT[4] += temporal_gettime(proceso_a_terminar->tiempo_estado);
+                        proceso_a_terminar->tiempo_estado = temporal_create();
+                    }
+
+
+                cambio_estado_exit(proceso_a_terminar);
+                list_remove_element (io_asociada->espera, proceso);
+                }
+            }
+
+        }
+    }
 
         //Verificar si esta en BLOQUED y suspendend blocked
 
-        sem_wait(&semaforo_bloqued);
-        struct pcb* proceso = encontrar_proceso_especifico(lista_bloqued, peticion->pid);
-        log_trace(log_kernel, "%d - Finalizo IO y pasa a READY", proceso->PID);
-        if (proceso != NULL)
-        {
-            list_remove_element ((t_list*)lista_bloqued, proceso);
-
-                proceso->ME[1] += 1;
-                temporal_stop(proceso->tiempo_estado);
-                proceso->MT[3] = temporal_gettime(proceso->tiempo_estado);
-                proceso->tiempo_estado = temporal_create();
-            
-            log_trace(log_kernel, "%d - Pasa del estado Bloqueado al Estado Ready", proceso->PID);
-
-            cambio_estado_ready(proceso);
-            
-        }
-        else
-        {
-            sem_wait(&semaforo_bloqued_sus);
-            proceso = encontrar_proceso_especifico(lista_sus_bloqued, peticion->pid);
-            list_remove_element ((t_list*)lista_sus_bloqued, proceso);
-
-            queue_push(lista_sus_ready, proceso);
-            sem_post(&semaforo_bloqued_sus);
-
-                proceso->ME[5] += 1;
-                temporal_stop(proceso->tiempo_estado);
-                proceso->MT[3] = temporal_gettime(proceso->tiempo_estado);
-                proceso->tiempo_estado = temporal_create();
-            log_trace(log_kernel, "%d - Pasa del estado Suspendido Bloqueado al Estado Ready", proceso->PID);
-        }
-        
-        sem_post((&semaforo_bloqued));
-
-
-        free(peticion);
-        peticion=NULL;
-    }
 }
 
 struct io* encontrar_io_especifico(t_list* lista, char* nombre)
@@ -351,7 +413,7 @@ void* escuchar_io()
     
     pthread_t io_especifica;
     pthread_create(&io_especifica, NULL, (void *(*)(void *))planificador_io, (void*)nueva_io);
-    
+    pthread_detach(&io_especifica);
 
     list_add(lista_io, nueva_io);
     }
@@ -398,13 +460,12 @@ void cronometrar_proceso(struct pcb* proceso)
 
         suspender_proceso(proceso);
     }
-
 }
 
 
 void planicador_mediano_plazo()
 {
-    while (1)
+    while (true)
     {
         sem_wait(&procesos_bloqueados);
         struct pcb* proceso = malloc(sizeof(struct pcb));
@@ -451,24 +512,16 @@ void cambio_estado_bloqued(int pid, int pc)
     
 }
 
-void cambio_estado_exit(int pid)
+void cambio_estado_exit(struct pcb* proceso_a_terminar)
 {
-    sem_wait(&semaforo_execute);
-    struct pcb* proceso_a_terminar = encontrar_proceso_especifico(lista_execute, pid);
-    list_remove_element ((t_list*)lista_execute, proceso_a_terminar);
-    sem_post(&semaforo_execute); 
     proceso_a_terminar->ME[6] += 1;
-    temporal_stop(proceso_a_terminar->tiempo_estado);
-    proceso_a_terminar->MT[6] += temporal_gettime(proceso_a_terminar->tiempo_estado);
-    proceso_a_terminar->tiempo_estado = temporal_create();
-
 
     int conexion_memoria = peticion_memoria();
     
     t_paquete* paquete_proceso_terminado = crear_paquete();
 
     int* puntero_pid = malloc(sizeof(int));
-    *puntero_pid = pid; 
+    *puntero_pid = proceso_a_terminar->PID  ; 
     char* mensaje = "Proceso terminado";
     agregar_a_paquete(mensaje, (void*)puntero_pid, sizeof(int));
 
@@ -479,7 +532,7 @@ void cambio_estado_exit(int pid)
 
     sem_post(&memoria__ocupada);
     
-    log_trace(log_kernel, "%d - Finaliza el proceso", pid);
+    log_trace(log_kernel, "%d - Finaliza el proceso", proceso_a_terminar->PID);
     
     //LOG innecesariamente largo del TP:
     log_trace(log_kernel, "## (%d) - Métricas de estado: NEW (%d) (%.2f), READY (%d) (%.2f), EXECUTE (%d) (%.2f), BLOCKED (%d) (%.2f), SUSPENDED BLOCKED (%d) (%.2f), SUSPENDED READY (%d) (%.2f), EXIT (%d) (%.2f)",
@@ -491,23 +544,11 @@ void cambio_estado_exit(int pid)
     proceso_a_terminar->ME[4], proceso_a_terminar->MT[4],
     proceso_a_terminar->ME[5], proceso_a_terminar->MT[5],
     proceso_a_terminar->ME[6], proceso_a_terminar->MT[6]
-
-);
-
-
+    );
 
     queue_push(lista_finished, proceso_a_terminar);
 
 }
-/*
-
-Preguntas / Aclaraciones
-5. Semaforo para Finalizar proceso y consultar a memoria --> SIs
-
-7. EStimar tiempo de rafaga y tiempo anterior?? --> estimación inicial en Config
-
-*/ 
-
 
 
 void planifacion_largo_plazo()
@@ -690,9 +731,24 @@ void* escucha_cpu_especifica(void* cpu)
             sem_post(&semaforo_new);
 
             log_trace(log_kernel, "%d - Pasa del estado Execute al Estado Exit", pid_proceso_usado);
-            cambio_estado_exit(pid_proceso_usado);
+
+
+                sem_wait(&semaforo_execute);
+                struct pcb* proceso_a_terminar = encontrar_proceso_especifico(lista_execute, pid_proceso_usado);
+                list_remove_element ((t_list*)lista_execute, proceso_a_terminar);
+                sem_post(&semaforo_execute); 
+                temporal_stop(proceso_a_terminar->tiempo_estado);
+
+
+                proceso_a_terminar->MT[2] += temporal_gettime(proceso_a_terminar->tiempo_estado);
+                proceso_a_terminar->tiempo_estado = temporal_create();
+
+                cambio_estado_exit(proceso_a_terminar);
+
             cpu_especifica->ocupado=0;
-            
+
+            list_destroy_and_destroy_elements(paquete_recibido, free);
+
             sem_post(&cpu_disponibles);
             return NULL;
         }
@@ -721,6 +777,7 @@ void* escucha_cpu_especifica(void* cpu)
             pthread_detach(&dump_proceso);
             cpu_especifica->ocupado=0;
             sem_post(&cpu_disponibles);
+                list_destroy_and_destroy_elements(paquete_recibido, free);
 
             return NULL;
         }
@@ -741,7 +798,18 @@ void* escucha_cpu_especifica(void* cpu)
             {
                 log_trace(log_kernel, "%d - Pasa del estado Execute al Estado Exit", pid_proceso_usado);
 
-                cambio_estado_exit(pid_proceso_usado);
+                sem_wait(&semaforo_execute);
+                struct pcb* proceso_a_terminar = encontrar_proceso_especifico(lista_execute, pid_proceso_usado);
+                list_remove_element ((t_list*)lista_execute, proceso_a_terminar);
+                sem_post(&semaforo_execute); 
+                temporal_stop(proceso_a_terminar->tiempo_estado);
+
+
+                proceso_a_terminar->MT[2] += temporal_gettime(proceso_a_terminar->tiempo_estado);
+                proceso_a_terminar->tiempo_estado = temporal_create();
+
+
+                cambio_estado_exit(proceso_a_terminar);
 
             }
             else
@@ -765,6 +833,7 @@ void* escucha_cpu_especifica(void* cpu)
                 //Cuando bloqueo --> enviar proceso a la lista de bloqueados Y a la lista de la IO
                 //Agregar en IO, Lista_bloqueados y "ocupado". 
                 //Se hace aparte la confirmación de existencia y se hace despues el proceso
+            list_destroy_and_destroy_elements(paquete_recibido, free);
 
             return NULL;
                 //LO mismo que en Exit. Modificar para que sea unico proceso --> Cambio de Execute a Exit
@@ -787,7 +856,7 @@ void* escucha_cpu_especifica(void* cpu)
             cambio_estado_ready(proceso_a_desalojar);
             
             sem_post(&proceso_desalojado);
-
+            
         }
         t_list* paquete_recibido = recibir_paquete(cpu_especifica->socket_dispatch, log_kernel);
 
@@ -969,6 +1038,30 @@ int main(int argc, char* argv[]) {
     char *nombreArchivo = NULL;
     char *tamanioProceso = NULL;
 
+
+    pthread_t servidor_cpu;
+    pthread_create(&servidor_cpu, NULL, escuchar_cpu, NULL);
+    pthread_detach(&servidor_cpu);
+
+
+    pthread_t servidor_io;
+    pthread_create(&servidor_io, NULL, escuchar_io, NULL);
+        pthread_detach(&servidor_io);
+
+
+    pthread_t planificador_largo;
+    pthread_create(&planificador_largo, NULL, planifacion_largo_plazo, NULL);
+        pthread_detach(&planificador_largo);
+
+    pthread_t planificador_corto;
+    pthread_create(&planificador_corto, NULL, planificacion_corto_plazo, NULL);
+        pthread_detach(&planificador_corto);
+
+    pthread_t planificador_mediano;
+    pthread_create(&planificador_mediano, NULL, planicador_mediano_plazo, NULL);
+            pthread_detach(&planificador_mediano);
+
+
     if (argc < 3)
     {
         log_trace(log_kernel, "Error, Parametros Invalidos");
@@ -976,20 +1069,16 @@ int main(int argc, char* argv[]) {
     }
     nombreArchivo = argv[1];
     tamanioProceso = argv[2];
-
-    pthread_t servidor_cpu;
-    pthread_create(&servidor_cpu, NULL, escuchar_cpu, lista_cpu);
-
-    pthread_t servidor_io;
-    pthread_create(&servidor_io, NULL, escuchar_io, lista_io);
+    getchar();
+    syscall_init_procc(tamanioProceso, nombreArchivo);
 
     //esperar a que el cliente ingrese "Enter" y iniciar la planificación.
 
 
-    log_destroy(log_kernel);
-    config_destroy(config_kernel);
+    //log_destroy(log_kernel);
+    //config_destroy(config_kernel);
 
     return 0;
 }
 
-//Agrega MALLOC
+//Agrega MALLOCS
