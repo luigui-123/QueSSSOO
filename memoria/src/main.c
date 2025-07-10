@@ -51,6 +51,12 @@ int TAM_MEMORIA_ACTUAL;
 t_list *lista_procesos;
 bool *bitmap;
 
+// Semaforos
+sem_t creacion;
+sem_t memo_usuario;
+sem_t asignar_pag;
+sem_t swap;
+
 // VER DICCIONARIO Y  CAMBIAR POR LISTA INSTRUCCIONES
 sem_t *consultar_memoria;
 char *MEMORIA_USUARIO;
@@ -100,21 +106,6 @@ void *ingresar_conexion(void *socket_void)
     return NULL;
 }
 
-int str_to_int(char *txt, int ac)
-{
-    int num = 0, i = ac;
-
-    while (txt[i] != ' ')
-    {
-        num = num * 10;
-        num += txt[i] - '0';
-        printf("%d", num);
-        i++;
-    }
-
-    return num;
-}
-
 int Asociar_Proceso_a_Marco()
 {
     int taman = TAM_MEMORIA / TAM_PAGINA;
@@ -140,14 +131,6 @@ void Liberar_Proceso_de_Marco(int i)
     return NULL;
 }
 
-int pagsMaxPorNivel(int nivel)
-{
-    int a = 1;
-    for (int i = 0; i < nivel; i++)
-        a *= ENTRADAS_POR_TABLA;
-    return a;
-}
-
 // El tamaño de paginas esta casteado a TAM_PAGINA
 t_list *generarTablaTamaño(int tam)
 {
@@ -157,7 +140,9 @@ t_list *generarTablaTamaño(int tam)
     for (int i = 0; i < tam / TAM_PAGINA; i++)
     {
         int *puntero = malloc(sizeof(int));
+        sem_wait(&asignar_pag);
         *puntero = Asociar_Proceso_a_Marco(); // obtenerDireccion();
+        sem_post(&asignar_pag);
         list_add(listaPaginas, puntero);
     }
 
@@ -202,10 +187,16 @@ t_list *reasignar_tabla(int tam, FILE *swap)
 
     for (int i = 0; i < tam / TAM_PAGINA; i++)
     {
-        int *puntero = malloc(sizeof(int)); // TODO Falta liberar este coso horroro de acá
+        int *puntero = malloc(sizeof(int));   // TODO Falta liberar este coso horroro de acá
+        sem_wait(&asignar_pag);
         *puntero = Asociar_Proceso_a_Marco(); // obtenerDireccion();
+        sem_post(&asignar_pag);
+        sem_wait(&memo_usuario);
         fread(MEMORIA_USUARIO + ((*puntero) * TAM_PAGINA), sizeof(char) * TAM_PAGINA, 1, swap);
-        // log_trace(log_memo,"se reescribio el marco %d",puntero);
+        sem_post(&memo_usuario);
+        char* cadena =malloc(sizeof(char)*TAM_PAGINA);
+        //log_trace(log_memo,"se reescribio el marco %d %s",*puntero,cadena);
+        free(cadena);
         list_add(listaPaginas, puntero);
     }
 
@@ -234,8 +225,52 @@ t_list *reasignar_tabla(int tam, FILE *swap)
     return tabla;
 }
 
+/*
+t_list *reasignar_tabla(int tam, FILE *swap)
+{
+    t_list *nivel_actual = list_create();
+
+    // Cargar punteros a marcos desde SWAP
+    for (int i = 0; i < tam / TAM_PAGINA; i++)
+    {
+        int *puntero = malloc(sizeof(int));
+        *puntero = Asociar_Proceso_a_Marco();
+
+        if (fread(MEMORIA_USUARIO + ((*puntero) * TAM_PAGINA), sizeof(char) * TAM_PAGINA, 1, swap) != 1)
+        {
+            free(puntero);
+            continue;
+        }
+
+        list_add(nivel_actual, puntero);
+    }
+
+    // Subir niveles: exactamente CANTIDAD_NIVELES - 1 veces
+    for (int nivel = 1; nivel < CANTIDAD_NIVELES; nivel++)
+    {
+        t_list *nivel_superior = list_create();
+
+        while (!list_is_empty(nivel_actual))
+        {
+            t_list *intermedia = list_create();
+            for (int j = 0; j < ENTRADAS_POR_TABLA && !list_is_empty(nivel_actual); j++)
+            {
+                void* hijo = list_remove(nivel_actual, 0);
+                list_add(intermedia, hijo);
+            }
+            list_add(nivel_superior, intermedia);
+        }
+
+        list_destroy(nivel_actual);
+        nivel_actual = nivel_superior;
+    }
+
+    return nivel_actual;  // nivel_actual es el nivel raíz de tipo t_list*
+}
+*/
 void peticion_creacion(int tamanio, char *archivo, int PDI)
 {
+    sem_wait(&creacion);
     if (tamanio < 0 || tamanio > TAM_MEMORIA_ACTUAL)
     {
         // log_trace(log_memo,"No hay suficiente memoria paraproceso %d",PDI);
@@ -252,6 +287,7 @@ void peticion_creacion(int tamanio, char *archivo, int PDI)
         TAM_MEMORIA_ACTUAL -= tamanio;
         crear_proceso(archivo, tamanio, PDI);
     }
+    sem_post(&creacion);
     return;
 }
 
@@ -303,7 +339,7 @@ void enviar_toda_lista(t_list *lista)
 { // Espera una lista a imprimir
     for (int i = 0; i < list_size(lista); i++)
     {
-        log_trace(log_memo, "Guardar %s\n", (char *)list_get(lista, i));
+        //log_trace(log_memo, "Guardar %s\n", (char *)list_get(lista, i));
     }
     return;
 }
@@ -344,9 +380,9 @@ void *gestion_conexiones()
 
 void liberar(t_list *tabla, int nivel_actual, int nivel_max)
 {
-    if (!tabla)
+    if (!tabla||list_size(tabla)==0)
         return;
-    int tam_tabla=list_size(tabla);
+    int tam_tabla = list_size(tabla);
     for (int i = 0; i < tam_tabla; i++)
     {
         t_list *elemento = list_get(tabla, i);
@@ -360,12 +396,12 @@ void liberar(t_list *tabla, int nivel_actual, int nivel_max)
             // Último nivel: liberar punteros individuales
             while (0 < list_size(elemento))
             {
-                int * puntero = list_remove(elemento, 0);
+                int *puntero = list_remove(elemento, 0);
                 Liberar_Proceso_de_Marco(*puntero);
                 free(puntero);
             }
             list_destroy(elemento);
-            //free(elemento);
+            // free(elemento);
         }
     }
     list_destroy(tabla); // libera solo la lista (no los elementos, ya fueron)
@@ -378,6 +414,7 @@ void destruir_proceso(void *pro)
     // log_trace(log_memo,"Destruir proceso restante %d",proceso->PID);
     liberar(proceso->Tabla_Pag, 1, CANTIDAD_NIVELES);
     TAM_MEMORIA_ACTUAL += proceso->tamanio;
+    log_trace(log_memo, "## PID %d - Proceso Destruido - Métricas - Acc.T.Pag: %d; Inst.Sol.: %d; SWAP: %d; Mem.Prin.: %d; Lec.Mem.: %d; Esc.Mem.: %d", proceso->PID, proceso->accesoTablaPag, proceso->instruccionSolicitada, proceso->bajadaSWAP, proceso->subidasMemo, proceso->cantLecturas, proceso->cantEscrituras);
     list_destroy_and_destroy_elements(proceso->lista_instrucciones, free);
     free(proceso);
     return;
@@ -385,6 +422,7 @@ void destruir_proceso(void *pro)
 
 struct pcb *find_by_PID(t_list *lista, int i)
 {
+    // Ver si poner semaforo para un proceso que se destruye pero deberia dar falso
     bool PID_contains(void *ptr)
     {
         struct pcb *proceso = (struct pcb *)ptr;
@@ -421,6 +459,7 @@ void eliminar_proceso(int i)
 
     struct pcb *proceso = list_remove_by_condition(lista_procesos, mismoPDI);
     // struct pcb *proceso= find_by_PID(lista,i);
+    //if (proceso->Tabla_Pag)
     liberar(proceso->Tabla_Pag, 1, CANTIDAD_NIVELES);
     TAM_MEMORIA_ACTUAL += proceso->tamanio;
     list_destroy_and_destroy_elements(proceso->lista_instrucciones, free);
@@ -440,7 +479,7 @@ void tabla_a_archivo(t_list *tabla, int nivel_actual, int nivel_max, FILE *swap)
     for (int i = 0; i < list_size(tabla); i++)
     {
         t_list *elemento = list_get(tabla, i);
-
+        //log_trace(log_memo,"la tabla tiene %d",list_size(elemento));
         if (nivel_actual < nivel_max)
         {
             // Si aún no llegamos al último nivel, asumimos que es otra t_list*
@@ -452,7 +491,9 @@ void tabla_a_archivo(t_list *tabla, int nivel_actual, int nivel_max, FILE *swap)
             {
                 int *pag = list_remove(elemento, 0);
                 // log_trace(log_memo,"se guardo el marco %d",pag);  // REEMPLAZAR POR PAG EN LUGAR DE INT
+                sem_wait(&memo_usuario);
                 fwrite(MEMORIA_USUARIO + ((*pag) * TAM_PAGINA), sizeof(char) * TAM_PAGINA, 1, swap);
+                sem_post(&memo_usuario);
                 Liberar_Proceso_de_Marco(*pag);
                 free(pag);
             }
@@ -460,8 +501,10 @@ void tabla_a_archivo(t_list *tabla, int nivel_actual, int nivel_max, FILE *swap)
             list_destroy(elemento);
         }
     }
+    //if(nivel_actual==1)
+        
     list_destroy(tabla); // libera solo la lista (no los elementos, ya fueron)
-
+    tabla = NULL;
     return NULL;
 }
 
@@ -471,14 +514,18 @@ void suspender(int i)
     int tam = proceso->tamanio;
     int PID = proceso->PID;
     FILE *swap;
+    sem_wait(&swap);
     if (swap = fopen(PATH_SWAPFILE, "ab"))
     {
         usleep(RETARDO_SWAP * 100);
         // log_trace(log_memo,"archivo abierto escritura");
         fwrite(&PID, sizeof(int), 1, swap);
         fwrite(&tam, sizeof(int), 1, swap);
+        //log_trace(log_memo,"proceos %d",PID);
         tabla_a_archivo(proceso->Tabla_Pag, 1, CANTIDAD_NIVELES, swap);
         fclose(swap);
+        sem_post(&swap);
+        proceso->Tabla_Pag = NULL;
         TAM_MEMORIA_ACTUAL += tam;
     }
     return;
@@ -498,19 +545,22 @@ void desuspender(int i)
         int PID = -1, tam;
         FILE *swap;
         FILE *reemplazo;
-        if ((swap = fopen(PATH_SWAPFILE, "rb"))&&(reemplazo = fopen("reemplazo", "wb")))
+        sem_wait(&swap);
+        if ((swap = fopen(PATH_SWAPFILE, "rb")) && (reemplazo = fopen("reemplazo", "wb")))
         {
             // log_trace(log_memo,"archivo abierto lectura");
             usleep(RETARDO_SWAP * 100);
             // WHILE CON EOF
-            while (!feof(swap))
+            // while (!feof(swap))
+            while (fread(&PID, sizeof(int), 1, swap) == 1 && fread(&tam, sizeof(int), 1, swap) == 1)
             {
-                
-                fread(&PID, sizeof(int), 1, swap);
-                fread(&tam, sizeof(int), 1, swap);
+
+                // fread(&PID, sizeof(int), 1, swap);
+                // fread(&tam, sizeof(int), 1, swap);
                 if (PID == i)
                 {
-                    liberar(proceso->Tabla_Pag,1,CANTIDAD_NIVELES);
+                    //if (proceso->Tabla_Pag)
+                        //liberar(proceso->Tabla_Pag, 1, CANTIDAD_NIVELES);
                     proceso->Tabla_Pag = reasignar_tabla(tam, swap); // READ que adelanta
                     proceso->bajadaSWAP += 1;
                     proceso->subidasMemo += 1;
@@ -518,21 +568,31 @@ void desuspender(int i)
                 }
                 else
                 {
-                    fwrite(&PID,sizeof(int),1,reemplazo);
+
+                    fwrite(&PID, sizeof(int), 1, reemplazo);
+                    fwrite(&tam, sizeof(int), 1, reemplazo);
+                    char *cad_remp = malloc(sizeof(char) * tam);
+                    fread(cad_remp, sizeof(char)* tam,1, swap);
+                    fwrite(cad_remp, sizeof(char)* tam,1, reemplazo);
+                    free(cad_remp);
+
+                    /*fwrite(&PID,sizeof(int),1,reemplazo);
                     fwrite(&tam,sizeof(int),1,reemplazo);
                     char * cad_remp=malloc(sizeof(char)*tam);
                     fread(cad_remp, sizeof(char) * tam, 1, swap);
                     fwrite(cad_remp, sizeof(char) * tam, 1, reemplazo);
                     log_trace(log_memo, "el contenido del proceso %d es %s", PID,cad_remp);
-                    free(cad_remp);
+                    free(cad_remp);*/
+                    
                     //fseek(swap, sizeof(char) * TAM_PAGINA * (tam / TAM_PAGINA), SEEK_CUR);
-                    log_trace(log_memo, "Se omitio el proceso %d", PID);
+                    //log_trace(log_memo, "Se omitio el proceso %d", PID);
                 }
             }
             fclose(reemplazo);
             fclose(swap);
             remove(PATH_SWAPFILE);
-            rename("reemplazo",PATH_SWAPFILE);
+            rename("reemplazo", PATH_SWAPFILE);
+            sem_post(&swap);
         }
     }
     return;
@@ -541,7 +601,7 @@ void desuspender(int i)
 void acceso_tabla_paginas(t_list *tabla, int pag[], int nivel_actual, int *accesoTablaPag)
 {
     // Esperar tiempo espera
-    //log_trace(log_memo, "la pag tiene %d paginas y se pide acceder a la %d", list_size(tabla), pag[nivel_actual - 1] + 1);
+    // log_trace(log_memo, "la pag tiene %d paginas y se pide acceder a la %d", list_size(tabla), pag[nivel_actual - 1] + 1);
 
     if (pag[nivel_actual - 1] < list_size(tabla))
     {
@@ -570,8 +630,8 @@ void acceso_tabla_paginas(t_list *tabla, int pag[], int nivel_actual, int *acces
     }
     else
     {
-        //log_trace(log_memo, "No tiene tantas entradas");
-        // Envia error
+        // log_trace(log_memo, "No tiene tantas entradas");
+        //  Envia error
     }
 }
 
@@ -584,7 +644,7 @@ void acceder_a_marco(int pro, int niveles[])
     }*/
     proceso->accesoTablaPag += 1;
     acceso_tabla_paginas(list_get(proceso->Tabla_Pag, 0), niveles, 1, &proceso->accesoTablaPag);
-    log_trace(log_memo, "se accedieron %d veces al proceso %d", proceso->accesoTablaPag, proceso->PID);
+    //log_trace(log_memo, "se accedieron %d veces al proceso %d", proceso->accesoTablaPag, proceso->PID);
     return NULL;
 }
 
@@ -605,7 +665,9 @@ void dump_memory(int pro)
     {
         txt_write_in_file(dump, tam);
         // fwrite(&tam,sizeof(tam),1,dump);
+        //sem_wait(&memo_usuario);
         dumpeo(proceso->Tabla_Pag, 1, CANTIDAD_NIVELES, dump);
+        //sem_post(&memo_usuario);
         fclose(dump);
     }
     free(archivo);
@@ -636,7 +698,9 @@ void dumpeo(t_list *tabla, int nivel_actual, int nivel_max, FILE *dump)
             while (inc < list_size(elemento))
             {
                 int *pag = list_get(elemento, inc);
+                sem_wait(&memo_usuario);
                 fwrite(MEMORIA_USUARIO + ((*pag) * TAM_PAGINA), sizeof(char) * TAM_PAGINA, 1, dump);
+                sem_post(&memo_usuario);
                 inc++;
             }
         }
@@ -644,44 +708,24 @@ void dumpeo(t_list *tabla, int nivel_actual, int nivel_max, FILE *dump)
     return NULL;
 }
 
-void leer_pag_entera(int pro,int marco)
+void leer_pag_entera(int pro, int marco)
 {
-    struct pcb* proceso=find_by_PID(lista_procesos,pro);
-    char *cadena = malloc((sizeof(char) * TAM_PAGINA)+1);
+    struct pcb *proceso = find_by_PID(lista_procesos, pro);
+    char *cadena = malloc((sizeof(char) * TAM_PAGINA) + 1);
     // memset(cadena,0,TAM_PAGINA);
     // strcpy(cadena,MEMORIA_USUARIO);
+    sem_wait(&memo_usuario);
     memcpy(cadena, MEMORIA_USUARIO + (marco * TAM_PAGINA), TAM_PAGINA);
-    strcat(cadena,"\0");
-    //log_trace(log_memo, "Se pide enviar la cadena %s", cadena);
+    sem_post(&memo_usuario);
+    strcat(cadena, "\0");
+    // log_trace(log_memo, "Se pide enviar la cadena %s", cadena);
     free(cadena);
     proceso->cantLecturas++;
-    log_trace(log_memo,"## PID: %d - Lectura - Dir. Física: %d - Tamaño: %d", proceso->PID,(MEMORIA_USUARIO + (marco * TAM_PAGINA)),TAM_PAGINA);
+    log_trace(log_memo, "## PID: %d - Lectura - Dir. Física: %d - Tamaño: %d", proceso->PID, (MEMORIA_USUARIO + (marco * TAM_PAGINA)), TAM_PAGINA);
     return;
 }
 
-void leer_pag_por_tam(int pro,int marco, int tam)
-{
-    if (tam > TAM_PAGINA)
-    {
-        // Error
-    }
-    else{
-        struct pcb* proceso=find_by_PID(lista_procesos,pro);
-        char *cadena = malloc(tam+1);
-        // memset(cadena,0,TAM_PAGINA);
-        // strcpy(cadena,MEMORIA_USUARIO);
-        memcpy(cadena, MEMORIA_USUARIO + (marco * TAM_PAGINA), tam);
-        strcat(cadena,"\0");
-        //log_trace(log_memo, "Se pide enviar la cadena %s", cadena);
-        proceso->cantLecturas++;
-        log_trace(log_memo,"## PID: %d - Lectura - Dir. Física: %d - Tamaño: %d", proceso->PID,(MEMORIA_USUARIO + (marco * TAM_PAGINA)),tam);
-        log_trace(log_memo,"## PID: %d - Lectura - Dir. Física: %s - Tamaño: %d", proceso->PID,(MEMORIA_USUARIO + (marco * TAM_PAGINA)),tam);
-        free(cadena);
-    }
-    return;
-}
-
-void actualizar_pag_completa(int pro,int dir, int tam, char *cont)
+void leer_pag_por_tam(int pro, int marco, int tam)
 {
     if (tam > TAM_PAGINA)
     {
@@ -689,26 +733,48 @@ void actualizar_pag_completa(int pro,int dir, int tam, char *cont)
     }
     else
     {
-        struct pcb* proceso=find_by_PID(lista_procesos,pro);
+        struct pcb *proceso = find_by_PID(lista_procesos, pro);
+        char *cadena = malloc(tam + 1);
+        // memset(cadena,0,TAM_PAGINA);
+        // strcpy(cadena,MEMORIA_USUARIO);
+        sem_wait(&memo_usuario);
+        memcpy(cadena, MEMORIA_USUARIO + (marco * TAM_PAGINA), tam);
+        sem_post(&memo_usuario);
+        strcat(cadena, "\0");
+        // log_trace(log_memo, "Se pide enviar la cadena %s", cadena);
+        proceso->cantLecturas++;
+        log_trace(log_memo, "## PID: %d - Lectura - Dir. Física: %d - Tamaño: %d", proceso->PID, (MEMORIA_USUARIO + (marco * TAM_PAGINA)), tam);
+        log_trace(log_memo, "%s", cadena);
+        free(cadena);
+    }
+    return;
+}
+
+void actualizar_pag_completa(int pro, int dir, int tam, char *cont)
+{
+    if (tam > TAM_PAGINA)
+    {
+        // Error
+    }
+    else
+    {
+        struct pcb *proceso = find_by_PID(lista_procesos, pro);
+        sem_wait(&memo_usuario);
         memset(MEMORIA_USUARIO + (dir * TAM_PAGINA), 0, TAM_PAGINA);
         memcpy(MEMORIA_USUARIO + (dir * TAM_PAGINA), cont, tam * sizeof(char));
+        sem_post(&memo_usuario);
         proceso->cantEscrituras++;
-        log_trace(log_memo,"## PID: %d - Escritura - Dir. Física: %d - Tamaño: %d", proceso->PID,(MEMORIA_USUARIO + (dir * TAM_PAGINA)),tam);
-    
+        log_trace(log_memo, "## PID: %d - Escritura - Dir. Física: %d - Tamaño: %d", proceso->PID, (MEMORIA_USUARIO + (dir * TAM_PAGINA)), tam);
     }
     return;
 }
 
 int main(int argc, char *argv[])
 {
-    /*
-    sem_t semaforo;
-    sem_init(&semaforo, 0, 0)
-    primer numero = > Si se comparten entre hilos(Boolean)
-    segundo numero = > Valor inicial
-    sem_wait(&semaforo)
-    sem_post(&semaforo)
-    */
+    sem_init(&creacion, 1, 1);
+    sem_init(&memo_usuario, 1, 1);
+    sem_init(&asignar_pag, 1, 1);
+    sem_init(&swap, 1, 1);
 
     // Crea un hilo que carga las variables globales. El sistema debe esperar que termine
     // consultar_memoria=sem_open("SEM_MOD_MEMO", O_CREAT | O_EXCL, S_IRUSR | S_IRUSR, 0);
@@ -726,59 +792,56 @@ int main(int argc, char *argv[])
     // Creamos el log de memoria
     log_memo = log_create("memoria.log", "memoria", false, LOG_LEVEL);
 
-    peticion_creacion(65, "pseudocodigo.txt", 1);
-    peticion_creacion(500, "pseu.txt", 2);
-
-    // struct pcb *proceso2=find_by_PID(lista_procesos,2);
-    // enviar_toda_lista(proceso2->lista_instrucciones);
-
-    // struct pcb *proceso1=find_by_PID(lista_procesos,1);
-    // enviar_toda_lista(proceso1->lista_instrucciones);
+    //      peticion_creacion(tamaño_del_proceso , "archivo_de_pseudocodigo" , numero_de_proceso);
+    //      acceder_a_marco(num_proceso , [posiciones_de_tabla]);
+    //      actualizar_pag_completa(numero_proceso , marco_a_escribir , tamaño_a_escribir , "mensaje");
+    //      leer_pag_entera(numero_proceso , marco_a_leer);
+    //      leer_pag_por_tam(numero_proceso , marco_a_leer , tamaño_a_leer);
+    //      dump_memory(numero_proceso_a_dumpear);
+    //      suspender(numero_proceso_a_suspender);
+    //      enviar_instruccion(numero_de_proceso , numero_instruccion);
+    //      eliminar_proceso(numero_proceso);
 
     int *posicion = malloc((CANTIDAD_NIVELES) * sizeof(int));
 
-    posicion[0] = 0;
-    posicion[1] = 0;
-    posicion[2] = 1;
+    posicion[0]=0;
+    posicion[1]=0;
+    posicion[2]=0;
 
-    //      acceder_a_marco(num_proceso , [posiciones_de_tabla]);
-    acceder_a_marco(2,posicion);
-    free(posicion);
-    
-    //      actualizar_pag_completa(numero_proceso , marco_a_escribir , tamaño_a_escribir , "mensaje");
-    //log_trace(log_memo,"qwertyuiopasdfghjklñzxcvbnmqwertyuiopasdfghjklñzxcvbnmqwertyuiop");
-    //actualizar_pag_completa(1,0, 64, "qwertyuiopasdfghjklnzxcvbnmqwertyuiopasdfghjklnzxcvbnmqwertyuiop");
-    actualizar_pag_completa(1,0, 16, "soy_el_proceso_1");
-    actualizar_pag_completa(1,1, 16, "soy_el_proceso_1");
-    actualizar_pag_completa(2,3, 16, "soy_el_proceso_2");
+    peticion_creacion(64, "pseudocodigo.txt", 1);
+    peticion_creacion(65, "pseu.txt", 2);
+    peticion_creacion(64, "pseudocodigo.txt", 3);
+    actualizar_pag_completa(2 , 1 , 62 , "hola__________________________________________________________");
+    actualizar_pag_completa(1 , 0 , 64 , "_____________________________juan_______________________________");
+    actualizar_pag_completa(2 , 2 , 64 , "hola_2__________________________________________________________");
+    actualizar_pag_completa(3 , 3 , 64 , "hola_roquefeleeererererererererererererererererererererererererr");
 
-    //      leer_pag_entera(numero_proceso , marco_a_leer);
-    //leer_pag_entera(1,0);
-    //leer_pag_entera(1,1);
+    acceder_a_marco(3, posicion);
+    enviar_instruccion(1,2);
 
-    //      eer_pag_por_tam(numero_proceso , marco_a_leer , tamaño_a_leer);
-    leer_pag_por_tam(1,0,12);
-    //leer_pag_por_tam(1,0,45);
+    suspender(1);
+    suspender(2);
+    suspender(3);
 
-    //      dump_memory(numero_proceso_a_dumpear);
+    desuspender(3);
+    desuspender(1);
+    desuspender(2);
+
     dump_memory(1);
     dump_memory(2);
+    dump_memory(3);
 
-    //      suspender(numero_proceso_a_suspender);
-    //suspender(1);
-    //suspender(2);
+    acceder_a_marco(3 , posicion);
+    acceder_a_marco(1 , posicion);
+    acceder_a_marco(2 , posicion);
 
-    //      desuspender(numero_proceso_a_desuspender);
-    //desuspender(1);
-    //desuspender(2);
-
-    //      enviar_instruccion(numero_de_proceso , numero_instruccion);
-    enviar_instruccion(1, 3);
-//dump_memory(1);
-//dump_memory(2);
-    //      eliminar_proceso(numero_proceso);
+    leer_pag_por_tam(1,1,20);
+    
     eliminar_proceso(1);
     eliminar_proceso(2);
+    eliminar_proceso(3);
+
+    free(posicion);
 
     // Creamos el hilo que crea el servidor
     /*pthread_t servidor;
@@ -804,6 +867,3 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-
-    return 0;
-}
