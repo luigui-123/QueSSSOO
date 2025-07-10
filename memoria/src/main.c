@@ -55,7 +55,7 @@ bool *bitmap;
 sem_t creacion;
 sem_t memo_usuario;
 sem_t asignar_pag;
-sem_t swap;
+sem_t memo_swap;
 
 // VER DICCIONARIO Y  CAMBIAR POR LISTA INSTRUCCIONES
 sem_t *consultar_memoria;
@@ -514,7 +514,7 @@ void suspender(int i)
     int tam = proceso->tamanio;
     int PID = proceso->PID;
     FILE *swap;
-    sem_wait(&swap);
+    sem_wait(&memo_swap);
     if (swap = fopen(PATH_SWAPFILE, "ab"))
     {
         usleep(RETARDO_SWAP * 100);
@@ -524,7 +524,7 @@ void suspender(int i)
         //log_trace(log_memo,"proceos %d",PID);
         tabla_a_archivo(proceso->Tabla_Pag, 1, CANTIDAD_NIVELES, swap);
         fclose(swap);
-        sem_post(&swap);
+        sem_post(&memo_swap);
         proceso->Tabla_Pag = NULL;
         TAM_MEMORIA_ACTUAL += tam;
     }
@@ -545,7 +545,7 @@ void desuspender(int i)
         int PID = -1, tam;
         FILE *swap;
         FILE *reemplazo;
-        sem_wait(&swap);
+        sem_wait(&memo_swap);
         if ((swap = fopen(PATH_SWAPFILE, "rb")) && (reemplazo = fopen("reemplazo", "wb")))
         {
             // log_trace(log_memo,"archivo abierto lectura");
@@ -592,7 +592,7 @@ void desuspender(int i)
             fclose(swap);
             remove(PATH_SWAPFILE);
             rename("reemplazo", PATH_SWAPFILE);
-            sem_post(&swap);
+            sem_post(&memo_swap);
         }
     }
     return;
@@ -774,7 +774,7 @@ int main(int argc, char *argv[])
     sem_init(&creacion, 1, 1);
     sem_init(&memo_usuario, 1, 1);
     sem_init(&asignar_pag, 1, 1);
-    sem_init(&swap, 1, 1);
+    sem_init(&memo_swap, 1, 1);
 
     // Crea un hilo que carga las variables globales. El sistema debe esperar que termine
     // consultar_memoria=sem_open("SEM_MOD_MEMO", O_CREAT | O_EXCL, S_IRUSR | S_IRUSR, 0);
@@ -866,4 +866,3 @@ int main(int argc, char *argv[])
 
     return 0;
 }
-
