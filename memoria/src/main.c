@@ -80,9 +80,9 @@ struct pcb // proceso
 };
 
 // Funciones que funcionan
-void iniciar_config()
+void iniciar_config(char* vector)
 {
-    nuevo_conf = config_create("memoria.conf");
+    nuevo_conf = config_create(vector);
 
     // Carga todas las globales del archivo
     PUERTO_ESCUCHA = config_get_string_value(nuevo_conf, "PUERTO_ESCUCHA");
@@ -99,77 +99,6 @@ void iniciar_config()
     DIR_PSEUDOCODIGO = config_get_string_value(nuevo_conf, "PATH_PSEUDOCODIGO");
 
     return;
-}
-
-void *ingresar_conexion(void *socket_void)
-{
-    int *socket = (int *)socket_void;
-
-    while (1)
-    {
-        t_list *partes = recibir_paquete(socket);
-        // recibir mensaje
-        // Dividir mensaje
-        int tarea = list_get(partes, 0);
-        int PID = list_get(partes, 1);
-        switch (tarea)
-        {
-            // serializar_paquete(t_paquete* paquete, int bytes)
-        case PROCESO_NUEVO:
-            int tam = list_get(partes, 2);
-            char *archivo = list_get(partes, 3);
-            peticion_creacion(tam, archivo, PID, socket);
-            free(archivo);
-            break;
-        case SUSPENDER:
-            suspender(PID);
-            break;
-        case DES_SUSPENDER:
-            desuspender(PID, socket);
-            break;
-        case FINALIZAR:
-            eliminar_proceso(PID);
-            break;
-        case ACCEDER_TABLA:
-            int *entradas = malloc(sizeof(int) * CANTIDAD_NIVELES);
-            for (int i = 0; i < CANTIDAD_NIVELES; i++)
-            {
-                entradas[i] = list_get(partes, i + 2);
-            }
-            acceder_a_marco(PID, entradas, socket);
-            free(entradas);
-            break;
-        case LEER_PAG:
-            int direccion_fisica = list_get(partes, 2);
-            int tam_leer = list_get(partes, 3);
-            leer_pag_por_tam(PID, direccion_fisica, tam_leer, socket);
-            break;
-        case ACTUALIZAR_PAG:
-            int dir_fisica = list_get(partes, 2);
-            int tam_escribir = list_get(partes, 3);
-            char *mensaje_a_escribir = list_get(partes, 4);
-            actualizar_pag_completa(PID, dir_fisica, tam_escribir, mensaje_a_escribir, socket);
-            free(mensaje_a_escribir);
-            break;
-        case MEMORY_DUMP:
-            dump_memory(PID);
-            break;
-        case TAREA:
-            int num_tarea = list_get(partes, 2);
-            enviar_instruccion(PID, num_tarea,socket);
-            break;
-        case CORTAR:
-            free(socket);
-            return;
-            break;
-        default:
-            // Enviar que no existe
-            break;
-        }
-        list_destroy_and_destroy_elements(partes, free);
-    }
-    free(socket);
-    return NULL;
 }
 
 int Asociar_Proceso_a_Marco()
@@ -416,24 +345,6 @@ void enviar_toda_lista(t_list *lista)
         // log_trace(log_memo, "Guardar %s\n", (char *)list_get(lista, i));
     }
     return;
-}
-
-void *gestion_conexiones()
-{
-    // Crea socket y espera
-    int socket_escucha = iniciar_modulo(PUERTO_ESCUCHA, log_memo);
-    socket_conectado = malloc(sizeof(int));
-    while (1)
-    {
-
-        // Recibe un cliente y crea un hilo personalizado para la conexión
-        *socket_conectado = establecer_conexion(socket_escucha, log_memo);
-        pthread_t manejo_servidor;
-        pthread_create(&manejo_servidor, NULL, ingresar_conexion, (void *)socket_conectado);
-        pthread_detach(manejo_servidor);
-    }
-    close(socket_escucha);
-    return NULL;
 }
 
 /*void* gestion_conexiones(){
@@ -883,8 +794,102 @@ void actualizar_pag_completa(int pro, int dir, int tam, char *cont, int *socket)
     return;
 }
 
+void *ingresar_conexion(void *socket_void)
+{
+    int *socket = (int *)socket_void;
+
+    while (1)
+    {
+        t_list *partes = recibir_paquete(socket);
+        // recibir mensaje
+        // Dividir mensaje
+        int tarea = list_get(partes, 0);
+        int PID = list_get(partes, 1);
+        switch (tarea)
+        {
+            // serializar_paquete(t_paquete* paquete, int bytes)
+        case PROCESO_NUEVO:
+            int tam = list_get(partes, 2);
+            char *archivo = list_get(partes, 3);
+            peticion_creacion(tam, archivo, PID, socket);
+            free(archivo);
+            break;
+        case SUSPENDER:
+            suspender(PID);
+            break;
+        case DES_SUSPENDER:
+            desuspender(PID, socket);
+            break;
+        case FINALIZAR:
+            eliminar_proceso(PID);
+            break;
+        case ACCEDER_TABLA:
+            int *entradas = malloc(sizeof(int) * CANTIDAD_NIVELES);
+            for (int i = 0; i < CANTIDAD_NIVELES; i++)
+            {
+                entradas[i] = list_get(partes, i + 2);
+            }
+            acceder_a_marco(PID, entradas, socket);
+            free(entradas);
+            break;
+        case LEER_PAG:
+            int direccion_fisica = list_get(partes, 2);
+            int tam_leer = list_get(partes, 3);
+            leer_pag_por_tam(PID, direccion_fisica, tam_leer, socket);
+            break;
+        case ACTUALIZAR_PAG:
+            int dir_fisica = list_get(partes, 2);
+            int tam_escribir = list_get(partes, 3);
+            char *mensaje_a_escribir = list_get(partes, 4);
+            actualizar_pag_completa(PID, dir_fisica, tam_escribir, mensaje_a_escribir, socket);
+            free(mensaje_a_escribir);
+            break;
+        case MEMORY_DUMP:
+            dump_memory(PID);
+            break;
+        case TAREA:
+            int num_tarea = list_get(partes, 2);
+            enviar_instruccion(PID, num_tarea,socket);
+            break;
+        case CORTAR:
+            free(socket);
+            return;
+            break;
+        default:
+            // Enviar que no existe
+            break;
+        }
+        list_destroy_and_destroy_elements(partes, free);
+    }
+    free(socket);
+    return NULL;
+}
+
+void *gestion_conexiones()
+{
+    // Crea socket y espera
+    int socket_escucha = iniciar_modulo(PUERTO_ESCUCHA, log_memo);
+    socket_conectado = malloc(sizeof(int));
+    while (1)
+    {
+
+        // Recibe un cliente y crea un hilo personalizado para la conexión
+        *socket_conectado = establecer_conexion(socket_escucha, log_memo);
+        pthread_t manejo_servidor;
+        pthread_create(&manejo_servidor, NULL, ingresar_conexion, (void *)socket_conectado);
+        pthread_detach(manejo_servidor);
+    }
+    close(socket_escucha);
+    return NULL;
+}
+
 int main(int argc, char *argv[])
 {
+    if (argv<2){
+        abort();
+    }
+    iniciar_config(argv[1]);
+    
     sem_init(&creacion, 1, 1);
     sem_init(&memo_usuario, 1, 1);
     sem_init(&asignar_pag, 1, 1);
@@ -894,7 +899,6 @@ int main(int argc, char *argv[])
     // consultar_memoria=sem_open("SEM_MOD_MEMO", O_CREAT | O_EXCL, S_IRUSR | S_IRUSR, 0);
 
     // Cargamos las variables globales
-    iniciar_config();
     MEMORIA_USUARIO = malloc(TAM_MEMORIA);
     TAM_MEMORIA_ACTUAL = TAM_MEMORIA;
     lista_procesos = list_create();
