@@ -136,7 +136,7 @@ int buscar_tlb(TLB *tlb, int pagina, int proceso, t_log*log_cpu) {
         }
     }
     log_info(log_cpu,"PID: %d - TLB MISS - Pagina: %d",proceso,pagina);
-    return 0; // Si no se encuentra, devuelve 0
+    return -1; // Si no se encuentra, devuelve -1
 }
 
 // Encuentra el índice LRU para reemplazo
@@ -195,7 +195,7 @@ void actualizar_tlb(TLB *tlb, int pagina, int marco,int proceso, char* reemplazo
 //cache de paginas
 typedef struct {
     int numero_pagina;
-    bool modificado;
+    int modificado;
     char *contenido;
     int referencia_bit; //utilzado por el algoritmo Clock
 } Pagina;
@@ -209,21 +209,38 @@ typedef struct {
 void inicializar_cache(Cache *cache) {
     for (int i = 0; i < ENTRADAS_CACHE; i++) {
         cache->paginas[i].numero_pagina = -1; 
-        cache->paginas[i].modificado = false;
+        cache->paginas[i].modificado = 0;
         cache->paginas[i].referencia_bit = 0;
         memset(cache->paginas[i].contenido, 0, TAMANIO_PAGINA);
     }
     cache->puntero = 0;
 }
-bool esta_en_cache(Cache *cache, int numero_pagina,cpuinfo*proceso,t_log*log_cpu) {
-    for (int i = 0; i < ENTRADAS_CACHE; i++) {
-        if (cache->paginas[i].numero_pagina == numero_pagina) {
-            log_info(log_cpu,"PID: %d - Cache Hit - Pagina: %d",proceso->pid,numero_pagina );
-            return true;
+bool esta_en_cache(Cache *cache, int numero_pagina,cpuinfo*proceso,t_log*log_cpu, int desplazamiento, int longitud) {
+    int cant_paginas = ((desplazamiento+longitud)/TAMANIO_PAGINA)+1;
+    bool *presencia = malloc(cant_paginas*sizeof(bool));
+    for(int i=0; i<cant_paginas; i++){ //Inicializo el array que va a indicar si todas las paginas necesitadas estan cargadas
+        presencia[i] = false;
+    }
+
+    for(int j=numero_pagina; j<numero_pagina+cant_paginas; j++){ //Verifico que paginas estan cargadas
+        for (int i = 0; i < ENTRADAS_CACHE; i++) {
+            if (cache->paginas[i].numero_pagina == j) {
+                presencia[j-numero_pagina] = true;
+            }
         }
     }
-    log_info(log_cpu,"PID: %d - Cache Miss - Pagina: %d",proceso->pid,numero_pagina );
-    return  false;
+
+    for(int i=0; i<cant_paginas; i++){ //Si una pagina no esta cargada -> Cache miss
+        if(presencia[i] == false){
+            log_info(log_cpu,"PID: %d - Cache Miss - Pagina: %d",proceso->pid,numero_pagina );
+            free(presencia);
+            return  false;
+        }
+    }
+
+    log_info(log_cpu,"PID: %d - Cache Hit - Pagina: %d",proceso->pid,numero_pagina );
+    free(presencia);
+    return true;
 }
 // Busca una pagina en cache y retorna el indice 
 int buscar_cache(Cache *cache, int numero_pagina) {
@@ -234,22 +251,24 @@ int buscar_cache(Cache *cache, int numero_pagina) {
     }
     return -1;
 }
-char* leer_cache (Cache *cache,int numero_pagina)
+char* leer_cache (Cache *cache,int numero_pagina, int desplazamiento, int longitud)
 {
     usleep(RETARDO_CACHE*1000);
+    int cant_paginas = ((desplazamiento+longitud)/TAMANIO_PAGINA)+1;
     int indice = buscar_cache(cache,numero_pagina);
     char*contenido = cache->paginas[indice].contenido;
     cache->paginas[indice].referencia_bit = 1; 
     return contenido;
 }
 
-void escribir_cache(Cache *cache, int numero_pagina, const char *contenido) {
+void escribir_cache(Cache *cache, int numero_pagina, const char *contenido, int desplazamiento, int longitud) {
     usleep(RETARDO_CACHE*1000); 
+    int cant_paginas = ((desplazamiento+longitud)/TAMANIO_PAGINA)+1;
     int indice = buscar_cache(cache,numero_pagina);   
     printf("Pagina %d encontrada en cache. Actualizando contenido.\n", numero_pagina);
     strncpy(cache->paginas[indice].contenido, contenido, TAMANIO_PAGINA);
     cache->paginas[indice].referencia_bit = 1; 
-    cache->paginas[indice].modificado = true;
+    cache->paginas[indice].modificado = 1;
     return;
 }    
 
@@ -261,7 +280,7 @@ void actualizar_cache (Cache *cache, Pagina*pagina,cpuinfo*proceso,int conexion_
   while (1) {
         if (cache->paginas[cache->puntero].referencia_bit == 0) {
             
-            if(cache->paginas[cache->puntero].modificado=true)
+            if(cache->paginas[cache->puntero].modificado)
             //si hubo modficaciones
             {
                 cambio_cache->contenido=cache->paginas[cache->puntero].contenido;
@@ -275,7 +294,7 @@ void actualizar_cache (Cache *cache, Pagina*pagina,cpuinfo*proceso,int conexion_
             // Reemplazar la pagina
             printf("Reemplazando pagina %d con pagina %d.\n", cache->paginas[cache->puntero].numero_pagina, pagina->numero_pagina);
             cache->paginas[cache->puntero].numero_pagina = pagina->numero_pagina;
-            cache->paginas[cache->puntero].modificado = false;
+            cache->paginas[cache->puntero].modificado = 0;
             strncpy(cache->paginas[cache->puntero].contenido, pagina->contenido, TAMANIO_PAGINA);
             cache->paginas[cache->puntero].referencia_bit = 1; // Setea el bit referencia en 1
             cache->puntero = (cache->puntero + 1) % ENTRADAS_CACHE; // Mueve el puntero clock
@@ -297,7 +316,7 @@ bool se_modifico_cache (Cache*cache)
 {
     for(int i=0;i<ENTRADAS_CACHE;i++)
     {
-        if (cache->paginas[i].modificado == true)
+        if (cache->paginas[i].modificado)
         {
             return true;
         }
@@ -313,12 +332,12 @@ void enviar_cambios_memoria (Cache *cache,int conexion_memoria,cpuinfo *proceso,
     int direccion_logica;
     for(int i=0;i<ENTRADAS_CACHE;i++)
     {
-        if(cache->paginas[i].modificado=true)
+        if(cache->paginas[i].modificado)
         {
             direccion_logica= cache->paginas[i].numero_pagina * TAMANIO_PAGINA;
             cambios_cache->direccion_fisica = traducir_direccion(direccion_logica,conexion_memoria,proceso,tlb,log_cpu);
             cambios_cache->contenido = cache->paginas[i].contenido;
-            cache->paginas[i].modificado =  false;
+            cache->paginas[i].modificado = 0;
             agregar_a_paquete(paquete,cambios_cache,sizeof(PaginaCache));
         }
     }
@@ -339,7 +358,7 @@ int traducir_direccion (int direccion_logica, int conexion_memoria,cpuinfo *proc
     int n3= (numero_pagina  / ENTRADAS_POR_TABLA ^ (0)) % ENTRADAS_POR_TABLA;
      
     int marco;
-    if(marco = buscar_tlb(tlb,numero_pagina,proceso->pid,log_cpu) ) //TLB hit
+    if((marco = buscar_tlb(tlb,numero_pagina,proceso->pid,log_cpu))+1 ) //TLB hit (sumo 1 porque si no lo encuentra, marco=-1)
     {
         return (marco * TAMANIO_PAGINA + desplazamiento);
     }
@@ -513,13 +532,14 @@ void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, int co
         int direccion_logica = atoi(instruccion_separada[1]);
         int numero_pagina = direccion_logica/TAMANIO_PAGINA;
         int desplazamiento = direccion_logica%TAMANIO_PAGINA;
+        int longitud = string_length(instruccion_separada[2]);
 
         //Primero vemos si esa pagina esta en cache
 
-        if(esta_en_cache(cache,numero_pagina,proceso,log_cpu))
+        if(esta_en_cache(cache,numero_pagina,proceso,log_cpu, desplazamiento, longitud))
         {
            
-            escribir_cache(cache,numero_pagina,instruccion_separada[2]);
+            escribir_cache(cache,numero_pagina,instruccion_separada[2], desplazamiento, longitud);
             proceso->pc = proceso->pc + 1;
         }
         else{
@@ -563,11 +583,12 @@ void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, int co
         int direccion_logica = atoi(instruccion_separada[1]);
         int numero_pagina = direccion_logica/TAMANIO_PAGINA;
         int desplazamiento =direccion_logica%TAMANIO_PAGINA;
+        int longitud = atoi(instruccion_separada[2]);
         
-        if(esta_en_cache(cache,numero_pagina,proceso,log_cpu))
+        if(esta_en_cache(cache,numero_pagina,proceso,log_cpu, desplazamiento, longitud))
         {
-            
-            char *leido = leer_cache (cache, numero_pagina);
+
+            char *leido = leer_cache (cache, numero_pagina, desplazamiento, longitud);
             log_info(log_cpu, leido);
             proceso->pc = proceso->pc + 1;
 
