@@ -104,13 +104,14 @@ typedef struct {
     int marco;
     int proceso;
     int menos_usado;   // Registro del último uso (para LRU)
-    
+    int numero_ingreso;
 } TLBEntrada;
 
 // Estructura para simular la TLB
 typedef struct {
     TLBEntrada entrada[ENTRADAS_TLB];
     int contador_acceso; // Contador global para registrar accesos
+    int contador_ingresos;
 } TLB;
 
 // Inicializar la TLB
@@ -120,42 +121,30 @@ void inicializar_tlb(TLB *tlb) {
         tlb->entrada[i].marco= -1;
         tlb->entrada[i].menos_usado = -1; // Sin historial de uso
         tlb->entrada[i].proceso=-1;
+        tlb->entrada[i].numero_ingreso=-1;
     }
     tlb->contador_acceso = 0; // Inicializa el contador global
 }
 
-bool esta_en_tlb(TLB *tlb, int pagina,cpuinfo*proceso,t_log*log_cpu) {
-    for (int i = 0; i < ENTRADAS_TLB; i++) {
-        if (tlb->entrada[i].pagina == pagina && tlb->entrada[i].proceso==proceso->pid) {
-            // Actualiza el registro de último uso
-            tlb->entrada[i].menos_usado = tlb->contador_acceso++;
-            log_info(log_cpu,"PID: %d - TLB HIT - Pagina: %d",proceso->pid,pagina);
-            return true;
-        }
-    }
-    log_info(log_cpu,"PID: %d - TLB MISS - Pagina: %d",proceso->pid,pagina);
-    return false; 
-}
-
 // Buscar en la TLB el marco 
-int buscar_tlb(TLB *tlb, int pagina, int proceso) {
+int buscar_tlb(TLB *tlb, int pagina, int proceso, t_log*log_cpu) {
     for (int i = 0; i < ENTRADAS_TLB; i++) {
         if ( tlb->entrada[i].pagina == pagina && tlb->entrada[i].proceso==proceso) {
-            printf("TLB hit: Página %d -> Marco %d\n", pagina, tlb->entrada[i].marco);
+            log_info(log_cpu,"PID: %d - TLB HIT - Pagina: %d",proceso,pagina);
             
-            return tlb->entrada[i].marco; // Devuelve el número de marco
+            return (tlb->entrada[i].marco); // Devuelve el número de marco
         }
     }
-    printf("TLB miss para la página %d\n", pagina);
-    return -1; // Si no se encuentra, devuelve -1
+    log_info(log_cpu,"PID: %d - TLB MISS - Pagina: %d",proceso,pagina);
+    return 0; // Si no se encuentra, devuelve 0
 }
 
 // Encuentra el índice LRU para reemplazo
 int buscar_entrada_lru(TLB *tlb) {
-    int indice_lru = -1;
-    int min_menos_usado = __INT_MAX__; // Un valor inicial alto
+    int indice_lru = 0;
+    int min_menos_usado = tlb->entrada[0].menos_usado; // El valor de referencia de la primera entrada
 
-    for (int i = 0; i < ENTRADAS_TLB; i++) {
+    for (int i = 1; i < ENTRADAS_TLB; i++) {
         
         if (tlb->entrada[i].menos_usado < min_menos_usado) {
             min_menos_usado = tlb->entrada[i].menos_usado;
@@ -165,20 +154,39 @@ int buscar_entrada_lru(TLB *tlb) {
     return indice_lru;
 }
 
-// Actualizar la TLB usando LRU
-void actualizar_tlb(TLB *tlb, int pagina, int marco,int proceso) {
-    if(buscar_tlb(tlb,pagina,proceso!=-1)){    
-        // Encuentra el índice a reemplazar según LRU
-        int indice = buscar_entrada_lru(tlb);
+int buscar_entrada_fifo(TLB *tlb){
+    int indice_fifo = 0;
+    int primero_ingresado = tlb->entrada[0].numero_ingreso;
 
-        // Reemplazar la entrada
-        tlb-> entrada[indice].pagina = pagina;
-        tlb-> entrada[indice].marco = marco;
-        tlb-> entrada[indice].menos_usado = tlb->contador_acceso++;
-        tlb-> entrada[indice].proceso=proceso;
-        printf("TLB actualizado: Página %d -> Marco %d (Reemplazando entrada %d)\n", 
-            pagina, marco, indice);
+    for(int i = 1; i < ENTRADAS_TLB; i++){
+        if(tlb->entrada[i].numero_ingreso < primero_ingresado){
+            primero_ingresado = tlb->entrada[i].numero_ingreso;
+            indice_fifo = i;
+        }
     }
+    return indice_fifo;
+}
+
+void actualizar_tlb(TLB *tlb, int pagina, int marco,int proceso, char* reemplazo_tlb) {
+    int indice = -1;
+    if(reemplazo_tlb == "LRU"){    
+        // Encuentra el índice a reemplazar según LRU
+        indice = buscar_entrada_lru(tlb);
+    }
+    else if(reemplazo_tlb == "FIFO"){
+        indice = buscar_entrada_fifo(tlb);
+    }
+    // Reemplazar la entrada
+    tlb-> entrada[indice].pagina = pagina;
+    tlb-> entrada[indice].marco = marco;
+    tlb->contador_acceso++;
+    tlb-> entrada[indice].menos_usado = tlb->contador_acceso;
+    tlb-> entrada[indice].proceso=proceso;
+    tlb->contador_ingresos++;
+    tlb->entrada[indice].numero_ingreso=tlb->contador_ingresos;
+    printf("TLB actualizado: Página %d -> Marco %d (Reemplazando entrada %d)\n", 
+        pagina, marco, indice);
+    return;
 }
 
 
@@ -330,11 +338,10 @@ int traducir_direccion (int direccion_logica, int conexion_memoria,cpuinfo *proc
     int n2= (numero_pagina  / ENTRADAS_POR_TABLA ^ (1)) % ENTRADAS_POR_TABLA;
     int n3= (numero_pagina  / ENTRADAS_POR_TABLA ^ (0)) % ENTRADAS_POR_TABLA;
      
-    
-    if(esta_en_tlb(tlb,numero_pagina,proceso,log_cpu) ) //TLB hit
+    int marco;
+    if(marco = buscar_tlb(tlb,numero_pagina,proceso->pid,log_cpu) ) //TLB hit
     {
-        int marco= buscar_tlb(tlb,numero_pagina,proceso->pid);
-        return marco * TAMANIO_PAGINA + desplazamiento;
+        return (marco * TAMANIO_PAGINA + desplazamiento);
     }
     else // TLB miss
     {
@@ -349,10 +356,10 @@ int traducir_direccion (int direccion_logica, int conexion_memoria,cpuinfo *proc
         enviar_paquete(paquete, conexion_memoria, log_cpu);
         free (paquete);
         free(DL);
-        int marco_memoria;
-        recv (conexion_memoria,&marco_memoria, sizeof(int), MSG_WAITALL);
+        int marco;
+        recv (conexion_memoria,&marco, sizeof(int), MSG_WAITALL);
         
-        return marco_memoria * TAMANIO_PAGINA +desplazamiento;
+        return (marco * TAMANIO_PAGINA +desplazamiento);
     } 
     
 
@@ -411,14 +418,14 @@ int main(char* id_cpu)
     int conexion_memoria=conectar_memoria(log_cpu);
     
     
-    char* leido = config_get_string_value(cpu_conf, "REEMPLAZO_CACHE");
-
+    char* reemplazo_cache = config_get_string_value(cpu_conf, "REEMPLAZO_CACHE");
+    char* reemplazo_tlb = config_get_string_value(cpu_conf, "REEMPLAZO_TLB");
 
     //enviar_mensaje(leido,conexion_memoria);
-    enviar_mensaje(leido,conexion_memoria, nombre_log_cpu);
+    enviar_mensaje("Hola Memoria!",conexion_memoria, nombre_log_cpu);
     
     //enviar cpu_id al kernel
-    enviar_mensaje(leido,conexion_kernel_dispatch, id_cpu);
+    enviar_mensaje("Hola Kernel",conexion_kernel_dispatch, id_cpu);
 
     t_list *proceso;
     char *instruccion;
@@ -432,6 +439,9 @@ int main(char* id_cpu)
     pthread_detach(hiloInterrupcion);
 
     //while (cpu conectada){
+        //vaciar cache y tlb
+        inicializar_cache(cache);
+        inicializar_tlb (tlb);
         proceso = recibir_procesos(conexion_kernel_dispatch, id_cpu);
         interrupcion = false;
         cpuinfo *procesocpu;
@@ -441,7 +451,7 @@ int main(char* id_cpu)
         procesocpu->pc = list_get(proceso, 1);
         do{
             instruccion = obtener_instruccion(procesocpu, conexion_memoria, log_cpu);
-            decodear_y_ejecutar_instruccion(instruccion, procesocpu, conexion_memoria, conexion_kernel_dispatch, log_cpu, &interrupcion);
+            decodear_y_ejecutar_instruccion(instruccion, procesocpu, conexion_memoria, conexion_kernel_dispatch, log_cpu, &interrupcion, cache, tlb, reemplazo_cache, reemplazo_tlb);
             sem_wait(&mutex_interrupcion);
             interrupcion = check_interrupt(interrupcion);
             sem_post(&mutex_interrupcion);
@@ -456,10 +466,6 @@ int main(char* id_cpu)
            enviar_cambios_memoria(cache,conexion_memoria,procesocpu,tlb,log_cpu); 
         }
         free(procesocpu);
-        //y vaciar cache y tlb
-        inicializar_cache(cache);
-        inicializar_tlb (tlb);
-        
     //}
 
     // Limpieza general
@@ -494,7 +500,7 @@ char *obtener_instruccion(cpuinfo *procesocpu, int conexion_memoria, t_log *log_
 }
 
 
-void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, int conexion_memoria, int conexion_kernel,t_log *log_cpu, bool *interrupcion,Cache *cache,TLB*tlb)
+void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, int conexion_memoria, int conexion_kernel,t_log *log_cpu, bool *interrupcion,Cache *cache,TLB*tlb, char* reemplazo_cache, char* reemplazo_tlb)
 {
     
     
@@ -547,7 +553,7 @@ void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, int co
 
             //actualizar TLB
             int marco= (dir_fisica-desplazamiento)/TAMANIO_PAGINA;
-            actualizar_tlb (tlb,numero_pagina,marco,proceso);
+            actualizar_tlb (tlb,numero_pagina,marco,proceso, reemplazo_tlb);
 
         }
         
@@ -562,7 +568,6 @@ void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, int co
         {
             
             char *leido = leer_cache (cache, numero_pagina);
-            printf(leido);
             log_info(log_cpu, leido);
             proceso->pc = proceso->pc + 1;
 
@@ -582,7 +587,6 @@ void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, int co
             enviar_paquete(paquete, conexion_memoria, log_cpu);
             free(read);
             char *leido = recibir_mensaje(conexion_memoria, log_cpu);
-            printf(leido);
             log_info(log_cpu, "PID: %d - Acción: LEER - Dirección Física: %d - Valor: %s",proceso->pid,dir_fisica,leido);
             proceso->pc = proceso->pc + 1;
             
@@ -597,7 +601,7 @@ void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, int co
 
             //actualizar TLB
             int marco= (dir_fisica-desplazamiento)/TAMANIO_PAGINA;
-            actualizar_tlb (tlb,numero_pagina,marco,proceso);
+            actualizar_tlb (tlb,numero_pagina,marco,proceso, reemplazo_tlb);
 
         }
         
