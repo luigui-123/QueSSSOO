@@ -251,13 +251,38 @@ int buscar_cache(Cache *cache, int numero_pagina) {
     }
     return -1;
 }
+
+int minimo(int a, int b) {
+  if (a < b) {
+    return a;
+  } else {
+    return b;
+  }
+}
+
 char* leer_cache (Cache *cache,int numero_pagina, int desplazamiento, int longitud)
 {
     usleep(RETARDO_CACHE*1000);
     int cant_paginas = ((desplazamiento+longitud)/TAMANIO_PAGINA)+1;
-    int indice = buscar_cache(cache,numero_pagina);
-    char*contenido = cache->paginas[indice].contenido;
-    cache->paginas[indice].referencia_bit = 1; 
+    char *contenido = "";
+    int indice, tope_leer;
+    for(int i=0; i<cant_paginas; i++){
+        indice = buscar_cache(cache,numero_pagina+i);
+        if(i==0){
+            tope_leer = minimo((desplazamiento+longitud), TAMANIO_PAGINA);
+            for(int j=desplazamiento; j<tope_leer; j++){
+                contenido[j-desplazamiento] = cache->paginas[indice].contenido[desplazamiento+j];
+            }
+            longitud = longitud-(tope_leer-desplazamiento);
+        } else {
+            tope_leer = minimo(longitud, TAMANIO_PAGINA);
+            for(int j=0; j<tope_leer;j++){
+                contenido[TAMANIO_PAGINA*i-desplazamiento+1+j] = cache->paginas[indice].contenido[j];
+            }
+            longitud = longitud-tope_leer;
+        }
+        cache->paginas[indice].referencia_bit = 1;      
+    }
     return contenido;
 }
 
