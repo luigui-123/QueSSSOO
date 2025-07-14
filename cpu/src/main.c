@@ -277,23 +277,44 @@ char* leer_cache (Cache *cache,int numero_pagina, int desplazamiento, int longit
         } else {
             tope_leer = minimo(longitud, TAMANIO_PAGINA);
             for(int j=0; j<tope_leer;j++){
-                contenido[TAMANIO_PAGINA*i-desplazamiento+1+j] = cache->paginas[indice].contenido[j];
+                contenido[TAMANIO_PAGINA*i-desplazamiento+j] = cache->paginas[indice].contenido[j];
             }
             longitud = longitud-tope_leer;
         }
         cache->paginas[indice].referencia_bit = 1;      
     }
+    contenido = strcat(contenido, '\0');
     return contenido;
 }
 
 void escribir_cache(Cache *cache, int numero_pagina, const char *contenido, int desplazamiento, int longitud) {
     usleep(RETARDO_CACHE*1000); 
     int cant_paginas = ((desplazamiento+longitud)/TAMANIO_PAGINA)+1;
-    int indice = buscar_cache(cache,numero_pagina);   
+    int indice, tope_escribir, tope_escribir_inic;   
     printf("Pagina %d encontrada en cache. Actualizando contenido.\n", numero_pagina);
     strncpy(cache->paginas[indice].contenido, contenido, TAMANIO_PAGINA);
-    cache->paginas[indice].referencia_bit = 1; 
-    cache->paginas[indice].modificado = 1;
+
+    char *nuevo_contenido;
+    for(int i=0; i<cant_paginas; i++){
+        indice = buscar_cache(cache,numero_pagina+i); 
+        if(i==0){
+            tope_escribir_inic = minimo((desplazamiento+longitud), TAMANIO_PAGINA);
+            for(int j=desplazamiento; j<tope_escribir_inic; j++){
+                cache->paginas[indice].contenido[desplazamiento+j] = contenido[j-desplazamiento];
+            }
+            longitud = longitud-tope_escribir_inic;
+        } else{
+            tope_escribir = minimo(longitud, TAMANIO_PAGINA);
+            for(int j=0; j<tope_escribir; j++){
+                cache->paginas[indice].contenido[j] = contenido[tope_escribir_inic+TAMANIO_PAGINA*(i-1)+j];
+            }
+            longitud = longitud-tope_escribir;
+        }
+
+        cache->paginas[indice].referencia_bit = 1; 
+        cache->paginas[indice].modificado = 1;
+    }
+
     return;
 }    
 
