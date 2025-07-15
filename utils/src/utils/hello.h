@@ -1,3 +1,4 @@
+
 #ifndef UTILS_HELLO_H_
 #define UTILS_HELLO_H_
 
@@ -30,6 +31,13 @@ typedef struct
 	t_buffer* buffer;
 } t_paquete;
 
+typedef struct 
+{
+	int pid;
+	int time;
+} ioinfo;
+
+
 void saludar(char* quien);
 
 int iniciar_modulo(char* puerto, t_log* log_modulo);
@@ -42,7 +50,7 @@ int establecer_conexion(int socket_servidor,t_log* log_modulo);
 
 void enviar_mensaje(char* mensaje, int socket_cliente,t_log* log_modulo);
 
-char *recibir_mensaje(int socket_cliente,t_log* log_modulo);
+char* recibir_mensaje(int socket_cliente,t_log* log_modulo);
 
 void reenviar_mensaje(int socket_cliente,int socket_servidor,t_log * log_modulo);
 
@@ -51,6 +59,8 @@ t_list* recibir_paquete(int socket_cliente, t_log * log_modulo);
 void enviar_paquete(t_paquete* paquete, int socket_cliente, t_log* log_modulo);
 
 void agregar_a_paquete(t_paquete* paquete, void* valor, int tamanio);
+
+void crear_buffer(t_paquete* paquete);
 
 t_paquete* crear_paquete(void);
 

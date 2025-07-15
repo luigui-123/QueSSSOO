@@ -33,7 +33,7 @@ int iniciar_modulo(char* puerto, t_log* log_modulo)
 
 	int socket_cpu;
 
-	struct addrinfo hints, *servinfo, *p;
+	struct addrinfo hints, *servinfo;
 
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_INET;
@@ -163,7 +163,8 @@ void* recibir_buffer(int* cod, int* size, int socket_cliente)
 
 	buffer = malloc(*size);
 	recv(socket_cliente, buffer, *size, MSG_WAITALL);
-		return buffer;
+	return buffer;
+
 }
 
 char* recibir_mensaje(int socket_cliente,t_log * log_modulo)
@@ -205,7 +206,7 @@ t_list* recibir_paquete(int socket_cliente, t_log * log_modulo)
 	t_list* valores = list_create();
 	int tamanio;
 	int cod;
-	buffer = recibir_buffer(cod, &size, socket_cliente);
+	buffer = recibir_buffer(&cod, &size, socket_cliente);
 	while(desplazamiento < size)
 	{
 		memcpy(&tamanio, buffer + desplazamiento, sizeof(int));
@@ -238,6 +239,14 @@ void agregar_a_paquete(t_paquete* paquete, void* valor, int tamanio)
 
 	paquete->buffer->size += tamanio + sizeof(int);
 }
+
+void crear_buffer(t_paquete* paquete)
+{
+	paquete->buffer = malloc(sizeof(t_buffer));
+	paquete->buffer->size = 0;
+	paquete->buffer->stream = NULL;
+}
+
 
 t_paquete* crear_paquete(void)
 {
