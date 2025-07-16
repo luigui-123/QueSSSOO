@@ -100,6 +100,63 @@ int peticion_memoria()
     return conexion_memoria;
 }
 
+void cambio_estado_ready(struct pcb *proceso)
+{
+    sem_wait(&semaforo_ready);
+    queue_push(lista_ready, proceso);
+    sem_post(&semaforo_ready);
+
+    sem_post(&procesos_listos);
+}
+
+void cambio_estado_exit(struct pcb *proceso_a_terminar)
+{
+    proceso_a_terminar->ME[6] += 1;
+
+    int conexion_memoria = peticion_memoria();
+
+    t_paquete *paquete_proceso_terminado = crear_paquete();
+
+    int *puntero_pid = malloc(sizeof(int));
+    *puntero_pid = proceso_a_terminar->PID;
+    char *mensaje = "Proceso terminado";
+    agregar_a_paquete(paquete_proceso_terminado, mensaje, strlen(mensaje));
+
+    agregar_a_paquete(paquete_proceso_terminado, (void *)puntero_pid, sizeof(int));
+    enviar_paquete(paquete_proceso_terminado, conexion_memoria);
+
+    sem_post(&memoria__ocupada);
+
+    log_trace(log_kernel, "%d - Finaliza el proceso", proceso_a_terminar->PID);
+
+    // LOG innecesariamente largo del TP:
+    log_trace(log_kernel, "## (%d) - Métricas de estado: NEW (%d) (%.2lu), READY (%d) (%.2lu), EXECUTE (%d) (%.2lu), BLOCKED (%d) (%.2lu), SUSPENDED BLOCKED (%d) (%.2lu), SUSPENDED READY (%d) (%.2lu), EXIT (%d) (%.2lu)",
+              proceso_a_terminar->PID,
+              proceso_a_terminar->ME[0], proceso_a_terminar->MT[0],
+              proceso_a_terminar->ME[1], proceso_a_terminar->MT[1],
+              proceso_a_terminar->ME[2], proceso_a_terminar->MT[2],
+              proceso_a_terminar->ME[3], proceso_a_terminar->MT[3],
+              proceso_a_terminar->ME[4], proceso_a_terminar->MT[4],
+              proceso_a_terminar->ME[5], proceso_a_terminar->MT[5],
+              proceso_a_terminar->ME[6], proceso_a_terminar->MT[6]);
+
+    queue_push(lista_finished, proceso_a_terminar);
+    temporal_destroy(proceso_a_terminar->tiempo_estado);
+
+    return;
+}
+
+struct pcb *encontrar_proceso_especifico(t_queue *lista, int pid)
+{
+    bool encontrar_proceso(void *elemento)
+    {
+        struct pcb *proceso = (struct pcb *)elemento;
+        return proceso->PID == pid;
+    }
+    struct pcb *proceso = (struct pcb *)list_find((t_list *)lista, encontrar_proceso);
+    return proceso;
+}
+
 void syscall_init_procc(char *tamanio, char *nombre)
 {
     struct pcb *proceso_nuevo;
@@ -125,8 +182,10 @@ void syscall_init_procc(char *tamanio, char *nombre)
     sem_post(&procesos_creados);
 }
 
-char *syscall_dump_memory(int *pid_proceso)
+void syscall_dump_memory(int *pid_proceso)
 {
+    int pid = *pid_proceso;
+    struct pcb* proceso_usado = encontrar_proceso_especifico(lista_bloqued, pid);
     int conexion = peticion_memoria();
     t_paquete *paquete_dump = crear_paquete();
     agregar_a_paquete(paquete_dump, (void *)pid_proceso, sizeof(int));
@@ -134,12 +193,55 @@ char *syscall_dump_memory(int *pid_proceso)
     free(pid_proceso);
     // Preguntar que significa "Error"
 
-    recibir_mensaje(conexion);
+    char* mensaje = recibir_mensaje(conexion);
+    if (strcmp(mensaje, "Error"))
+    {   
+
+        if (proceso_usado != NULL)
+        {
+            log_trace(log_kernel, "%d - Pasa del estado Bloqueado al Estado Exit", pid);
+            sem_wait(&semaforo_bloqued);
+            list_remove_element((t_list *)lista_bloqued, proceso_usado);
+            sem_post(&semaforo_bloqued);
+            temporal_stop(proceso_usado->tiempo_estado);
+
+            proceso_usado->MT[3] += temporal_gettime(proceso_usado->tiempo_estado);
+
+        }
+        else
+        {
+            sem_wait(&semaforo_bloqued_sus);
+            list_remove_element((t_list *)lista_sus_bloqued, proceso_usado);
+            sem_post(&semaforo_bloqued_sus);
+
+            temporal_stop(proceso_usado->tiempo_estado);
+            proceso_usado->MT[3] += temporal_gettime(proceso_usado->tiempo_estado);
+            temporal_destroy(proceso_usado->tiempo_estado);
+            proceso_usado->tiempo_estado = temporal_create();
+            sem_post(&procesos_creados);
+            log_trace(log_kernel, "%d - Pasa del estado Suspendido Bloqueado al Estado Exit", proceso_usado->PID);
+            
+            cambio_estado_exit(proceso_usado);
+
+        }
+    }
 
 
-    //Pasar a Exit
+    else
+    {
+        list_remove_element((t_list *)lista_bloqued, proceso_usado);
 
+        proceso_usado->ME[1] += 1;
+        temporal_stop(proceso_usado->tiempo_estado);
+        proceso_usado->MT[3] += temporal_gettime(proceso_usado->tiempo_estado);
+        temporal_destroy(proceso_usado->tiempo_estado);
+        proceso_usado->tiempo_estado = temporal_create();
 
+        log_trace(log_kernel, "%d - Pasa del estado Bloqueado al Estado Ready", proceso_usado->PID);
+
+        cambio_estado_ready(proceso_usado);    
+    
+    }
 }
 
 void *syscall_io(void *peticion)
@@ -195,61 +297,6 @@ void *escuchar_cpu()
     return NULL;
 }
 
-void cambio_estado_ready(struct pcb *proceso)
-{
-    sem_wait(&semaforo_ready);
-    queue_push(lista_ready, proceso);
-    sem_post(&semaforo_ready);
-
-    sem_post(&procesos_listos);
-}
-
-void cambio_estado_exit(struct pcb *proceso_a_terminar)
-{
-    proceso_a_terminar->ME[6] += 1;
-
-    int conexion_memoria = peticion_memoria();
-
-    t_paquete *paquete_proceso_terminado = crear_paquete();
-
-    int *puntero_pid = malloc(sizeof(int));
-    *puntero_pid = proceso_a_terminar->PID;
-    char *mensaje = "Proceso terminado";
-    agregar_a_paquete(paquete_proceso_terminado, mensaje, strlen(mensaje));
-
-    agregar_a_paquete(paquete_proceso_terminado, (void *)puntero_pid, sizeof(int));
-    enviar_paquete(paquete_proceso_terminado, conexion_memoria);
-
-    sem_post(&memoria__ocupada);
-
-    log_trace(log_kernel, "%d - Finaliza el proceso", proceso_a_terminar->PID);
-
-    // LOG innecesariamente largo del TP:
-    log_trace(log_kernel, "## (%d) - Métricas de estado: NEW (%d) (%.2lu), READY (%d) (%.2lu), EXECUTE (%d) (%.2lu), BLOCKED (%d) (%.2lu), SUSPENDED BLOCKED (%d) (%.2lu), SUSPENDED READY (%d) (%.2lu), EXIT (%d) (%.2lu)",
-              proceso_a_terminar->PID,
-              proceso_a_terminar->ME[0], proceso_a_terminar->MT[0],
-              proceso_a_terminar->ME[1], proceso_a_terminar->MT[1],
-              proceso_a_terminar->ME[2], proceso_a_terminar->MT[2],
-              proceso_a_terminar->ME[3], proceso_a_terminar->MT[3],
-              proceso_a_terminar->ME[4], proceso_a_terminar->MT[4],
-              proceso_a_terminar->ME[5], proceso_a_terminar->MT[5],
-              proceso_a_terminar->ME[6], proceso_a_terminar->MT[6]);
-
-    queue_push(lista_finished, proceso_a_terminar);
-
-    return;
-}
-
-struct pcb *encontrar_proceso_especifico(t_queue *lista, int pid)
-{
-    bool encontrar_proceso(void *elemento)
-    {
-        struct pcb *proceso = (struct pcb *)elemento;
-        return proceso->PID == pid;
-    }
-    struct pcb *proceso = (struct pcb *)list_find((t_list *)lista, encontrar_proceso);
-    return proceso;
-}
 
 void *encontrar_proceso_pequeño(void *elemento, void *elemento2)
 {
