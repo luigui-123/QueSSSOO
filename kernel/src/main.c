@@ -185,7 +185,6 @@ void syscall_init_procc(char *tamanio, char *nombre)
 void syscall_dump_memory(int *pid_proceso)
 {
     int pid = *pid_proceso;
-    struct pcb* proceso_usado = encontrar_proceso_especifico(lista_bloqued, pid);
     int conexion = peticion_memoria();
     t_paquete *paquete_dump = crear_paquete();
     agregar_a_paquete(paquete_dump, (void *)pid_proceso, sizeof(int));
@@ -197,6 +196,7 @@ void syscall_dump_memory(int *pid_proceso)
     if (strcmp(mensaje, "Error"))
     {   
 
+        struct pcb* proceso_usado = encontrar_proceso_especifico(lista_bloqued, pid);
         if (proceso_usado != NULL)
         {
             log_trace(log_kernel, "%d - Pasa del estado Bloqueado al Estado Exit", pid);
@@ -206,19 +206,23 @@ void syscall_dump_memory(int *pid_proceso)
             temporal_stop(proceso_usado->tiempo_estado);
 
             proceso_usado->MT[3] += temporal_gettime(proceso_usado->tiempo_estado);
+            
+            cambio_estado_exit(proceso_usado);
 
         }
         else
         {
+            
+            struct pcb* proceso_usado = encontrar_proceso_especifico(lista_sus_bloqued, pid);
+
             sem_wait(&semaforo_bloqued_sus);
             list_remove_element((t_list *)lista_sus_bloqued, proceso_usado);
             sem_post(&semaforo_bloqued_sus);
 
             temporal_stop(proceso_usado->tiempo_estado);
-            proceso_usado->MT[3] += temporal_gettime(proceso_usado->tiempo_estado);
+            proceso_usado->MT[4] += temporal_gettime(proceso_usado->tiempo_estado);
             temporal_destroy(proceso_usado->tiempo_estado);
             proceso_usado->tiempo_estado = temporal_create();
-            sem_post(&procesos_creados);
             log_trace(log_kernel, "%d - Pasa del estado Suspendido Bloqueado al Estado Exit", proceso_usado->PID);
             
             cambio_estado_exit(proceso_usado);
@@ -229,17 +233,47 @@ void syscall_dump_memory(int *pid_proceso)
 
     else
     {
-        list_remove_element((t_list *)lista_bloqued, proceso_usado);
+        struct pcb* proceso_usado = encontrar_proceso_especifico(lista_bloqued, pid);
 
-        proceso_usado->ME[1] += 1;
-        temporal_stop(proceso_usado->tiempo_estado);
-        proceso_usado->MT[3] += temporal_gettime(proceso_usado->tiempo_estado);
-        temporal_destroy(proceso_usado->tiempo_estado);
-        proceso_usado->tiempo_estado = temporal_create();
+        if (proceso_usado != NULL)
+        {
+            sem_wait(&semaforo_bloqued);
+            list_remove_element((t_list *)lista_bloqued, proceso_usado);
+            sem_post(&semaforo_bloqued);
+            temporal_stop(proceso_usado->tiempo_estado);
 
-        log_trace(log_kernel, "%d - Pasa del estado Bloqueado al Estado Ready", proceso_usado->PID);
+            proceso_usado->MT[3] += temporal_gettime(proceso_usado->tiempo_estado);
+            log_trace(log_kernel, "%d - Pasa del estado Bloqueado al Estado Ready", pid);
+            sem_post(&procesos_listos);
+            proceso_usado->ME[1] += 1;
+            cambio_estado_ready(proceso_usado);    
 
-        cambio_estado_ready(proceso_usado);    
+        }
+        else
+        {
+                sem_wait(&semaforo_bloqued_sus);
+             struct pcb* proceso_usado = encontrar_proceso_especifico(lista_bloqued, pid);
+                if (!proceso_usado)
+                    abort();
+                list_remove_element((t_list *)lista_sus_bloqued, proceso_usado);
+
+                sem_wait(&semaforo_ready_sus);
+                queue_push(lista_sus_ready, proceso_usado);
+                sem_post(&semaforo_ready_sus);
+
+                sem_post(&semaforo_bloqued_sus);
+
+                proceso_usado->ME[5] += 1;
+                temporal_stop(proceso_usado->tiempo_estado);
+                proceso_usado->MT[3] += temporal_gettime(proceso_usado->tiempo_estado);
+                temporal_destroy(proceso_usado->tiempo_estado);
+                proceso_usado->tiempo_estado = temporal_create();
+                sem_post(&procesos_creados);
+                log_trace(log_kernel, "%d - Pasa del estado Suspendido Bloqueado al Estado Suspended Ready", proceso_usado->PID);
+            
+        }
+
+
     
     }
 }
@@ -355,6 +389,7 @@ void planificador_io(struct io *io_asociada)
                 log_trace(log_kernel, "%d - Pasa del estado Bloqueado al Estado Ready", proceso->PID);
 
                 cambio_estado_ready(proceso);
+                sem_post(&procesos_listos);
             }
             else
             {
