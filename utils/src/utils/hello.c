@@ -27,7 +27,8 @@ void* serializar_paquete(t_paquete* paquete, int bytes)
 }
 
 // Iniciar server y esperar conexion
-int iniciar_modulo(char* puerto, t_log* log_modulo)
+int iniciar_modulo(char* puerto
+)
 {
 	// Quitar esta línea cuando hayamos terminado de implementar la funcion
 
@@ -60,20 +61,15 @@ int iniciar_modulo(char* puerto, t_log* log_modulo)
 	if (err == -1)
 		printf("Error en la cpu, bind");
 
-
-	log_info(log_modulo, "Se espera conexion");
-
 	// Escuchamos las conexiones entrantes
 	err = listen(socket_cpu, SOMAXCONN);
-
-	log_info(log_modulo, "Listo para escuchar");
 
 	freeaddrinfo(servinfo);
 	return socket_cpu;
 }
 
 // Iniciar cliente
-int iniciar_conexion(char* ip, char* puerto,t_log* log_modulo)
+int iniciar_conexion(char* ip, char* puerto)
 {
 	struct addrinfo hints;
 	struct addrinfo *modulo_2;
@@ -93,21 +89,19 @@ int iniciar_conexion(char* ip, char* puerto,t_log* log_modulo)
 	
 	connect(socket_a_crear, modulo_2->ai_addr, modulo_2->ai_addrlen);
 
-	log_info(log_modulo, "Se conecto exitosamente");
 	freeaddrinfo(modulo_2);
 
 	return socket_a_crear;
 }
 
 // Servidor acepta cliente
-int establecer_conexion(int socket_escucha, t_log* log_modulo)
+int establecer_conexion(int socket_escucha)
 {
 
 	int socket_conectado = accept(socket_escucha, NULL, NULL);
 	if (socket_conectado == -1) {
 		return -1;
 	}
-	log_info(log_modulo, "Se conecto exitosamente");
 	return socket_conectado;
 }
 
@@ -118,10 +112,9 @@ void eliminar_paquete(t_paquete* paquete)
 	free(paquete);
 }
 
-void enviar_mensaje(char* mensaje, int socket_cliente, t_log* log_modulo)
+void enviar_mensaje(char* mensaje, int socket_cliente)
 {
 	t_paquete* paquete = malloc(sizeof(t_paquete));
-	log_info(log_modulo, "El mensaje a enviar es %s", mensaje);
 
 	paquete->codigo_operacion = MENSAJE;
 	paquete->buffer = malloc(sizeof(t_buffer));
@@ -142,10 +135,6 @@ void enviar_mensaje(char* mensaje, int socket_cliente, t_log* log_modulo)
 	memcpy(&size, a_enviar+sizeof(int), sizeof(int));
 
 	memcpy(&buffer, a_enviar+(2*sizeof(int)), size);
-
-	log_info(log_modulo, "aca esta el Cod %d", cod);
-	log_info(log_modulo, "aca esta el size %d", size);
-	log_info(log_modulo, "aca esta el buffer %s", buffer);
 	
 	send(socket_cliente, a_enviar, bytes, 0);
 
@@ -167,7 +156,7 @@ void* recibir_buffer(int* cod, int* size, int socket_cliente)
 
 }
 
-char* recibir_mensaje(int socket_cliente,t_log * log_modulo)
+char* recibir_mensaje(int socket_cliente)
 {
  	int size;
 	int cod;
@@ -177,13 +166,12 @@ char* recibir_mensaje(int socket_cliente,t_log * log_modulo)
 
 	buffer = strcat(buffer, "\0");
 
- 	log_info(log_modulo, "Me llego el mensaje %s", buffer);
  	//free(buffer);
 
 	return buffer;
 }
 
-void reenviar_mensaje(int socket_cliente,int socket_servidor,t_log * log_modulo)
+void reenviar_mensaje(int socket_cliente,int socket_servidor)
 {
 	int size;
 	int cod;
@@ -193,12 +181,11 @@ void reenviar_mensaje(int socket_cliente,int socket_servidor,t_log * log_modulo)
 
 	buffer = strcat(buffer, "\0");
 
- 	log_info(log_modulo, "Reenviando %s", buffer);
-	enviar_mensaje(buffer,socket_servidor,log_modulo);
+	enviar_mensaje(buffer,socket_servidor);
  	free(buffer);
 }
 
-t_list* recibir_paquete(int socket_cliente, t_log * log_modulo)
+t_list* recibir_paquete(int socket_cliente)
 {
 	int size;
 	int desplazamiento = 0;
@@ -220,7 +207,7 @@ t_list* recibir_paquete(int socket_cliente, t_log * log_modulo)
 	return valores;
 }
 
-void enviar_paquete(t_paquete* paquete, int socket_cliente, t_log * log_modulo)
+void enviar_paquete(t_paquete* paquete, int socket_cliente)
 {
 	int bytes = paquete->buffer->size + 2*sizeof(int);
 	void* a_enviar = serializar_paquete(paquete, bytes);
