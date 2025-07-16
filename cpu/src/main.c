@@ -444,11 +444,10 @@ int traducir_direccion (int direccion_logica,cpuinfo *proceso, TLBEntrada* tlb)
 sem_t mutex_interrupcion;
 bool interrupcion_conexion = false;
 
-void escuchar_conexion_interrupt(void *arg){
-    infohilointerrupcion *datos = (infohilointerrupcion *) arg;
+void escuchar_conexion_interrupt(){
     while(1){
-        char* mensaje = recibir_mensaje(datos->conexion, datos->log);
-        log_info(datos->log, "Llega interrupcion al puerto Interrupt");
+        char* mensaje = recibir_mensaje(conexion_kernel_interrupt, log_cpu);
+        log_info(log_cpu, "Llega interrupcion al puerto Interrupt");
         if(mensaje == "DESALOJAR")
             sem_wait(&mutex_interrupcion);
             interrupcion_conexion = true;
@@ -468,14 +467,14 @@ bool check_interrupt(bool interrupcion){
 
 int main(char* argv[]) 
 {
-    char *nombre_log_cpu = strcat("cpu", argv[1]);
+    char *nombre_log_cpu = strcat("cpu", argv[0]);
     nombre_log_cpu = strcat(nombre_log_cpu, ".log");
 
     log_cpu = log_create(nombre_log_cpu, "cpu", false, LOG_LEVEL_INFO);
 
-    log_info(log_cpu,argv[1]);
+    log_info(log_cpu,argv[0]);
 
-    char *path_config = strcat("CPU", argv[1]);
+    char *path_config = strcat("CPU", argv[0]);
     path_config = strcat(path_config, ".config");
 
     iniciar_config(path_config); 
@@ -493,13 +492,13 @@ int main(char* argv[])
     }
     
     //enviar cpu_id al kernel
-    enviar_mensaje(argv[1],conexion_kernel_dispatch, log_cpu);
+    enviar_mensaje(argv[0],conexion_kernel_dispatch, log_cpu);
 
     recibir_mensaje(conexion_kernel_dispatch, log_cpu);
     
     
     //enviar cpu_id a memoria;
-    enviar_mensaje(argv[1], conexion_memoria, log_cpu);
+    enviar_mensaje(argv[0], conexion_memoria, log_cpu);
 
     t_list *paquete_memoria = recibir_paquete(conexion_memoria, log_cpu);
     tam_pagina = list_get(paquete_memoria, 0);
@@ -508,15 +507,12 @@ int main(char* argv[])
     t_list *proceso;
     char *instruccion;
     bool interrupcion;
-    infohilointerrupcion *conexion_interrumpir = malloc(sizeof(infohilointerrupcion));
-    conexion_interrumpir->conexion = conexion_kernel_interrupt;
-    conexion_interrumpir->log = log_cpu;
     sem_init(&mutex_interrupcion, 0, 1);
     pthread_t hiloInterrupcion;
-    pthread_create(&hiloInterrupcion, NULL, escuchar_conexion_interrupt, (void *) conexion_interrumpir);
+    pthread_create(&hiloInterrupcion, NULL, escuchar_conexion_interrupt, NULL);
     pthread_detach(hiloInterrupcion);
 
-    //while (cpu conectada){
+    while (1){
         //vaciar cache y tlb
         if(entradas_cache > 0)
             inicializar_cache(cache);
@@ -546,10 +542,11 @@ int main(char* argv[])
            enviar_cambios_memoria(cache, procesocpu, tlb); 
         }
         free(procesocpu);
-    //}
+    }
 
     // Limpieza general
     close(conexion_kernel_dispatch);
+    close(conexion_kernel_interrupt);
     close(conexion_memoria);
     log_destroy(log_cpu);
     config_destroy(config);
@@ -583,10 +580,10 @@ char *obtener_instruccion(cpuinfo *procesocpu)
 void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, bool *interrupcion,Pagina *cache,TLBEntrada*tlb)
 {
     
-    
-    char **instruccion_separada = string_split(instruccion, " ");
+    char **instruccion_separada = string_n_split(instruccion, 3, " ");
     string_to_upper(instruccion_separada[0]);
-    char *parametros = strcat(instruccion_separada[1], " ", instruccion_separada[2]);
+    char *parametros = strcat(instruccion_separada[1], " ");
+    parametros = strcat(parametros, instruccion_separada[2]);
     log_info(log_cpu, "PID: ", proceso->pid, " - Ejecutando: ", instruccion_separada[0], " - ", parametros);
     if(instruccion_separada[0] == "WRITE"){
 
@@ -602,8 +599,7 @@ void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, bool *
            
             escribir_cache(cache,numero_pagina,instruccion_separada[2], desplazamiento, longitud);
             proceso->pc = proceso->pc + 1;
-        }
-        else{
+        } else{
 
             //traducir y escribir
             int dir_fisica = traducir_direccion(direccion_logica, proceso, tlb);
