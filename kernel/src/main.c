@@ -96,7 +96,7 @@ int peticion_memoria()
 {
     char *puerto_memoria = config_get_string_value(config_kernel, "PUERTO_MEMORIA");
     char *ip_memoria = config_get_string_value(config_kernel, "IP_MEMORIA");
-    int conexion_memoria = iniciar_conexion(ip_memoria, puerto_memoria, log_kernel);
+    int conexion_memoria = iniciar_conexion(ip_memoria, puerto_memoria);
     return conexion_memoria;
 }
 
@@ -130,11 +130,11 @@ char *syscall_dump_memory(int *pid_proceso)
     int conexion = peticion_memoria();
     t_paquete *paquete_dump = crear_paquete();
     agregar_a_paquete(paquete_dump, (void *)pid_proceso, sizeof(int));
-    enviar_paquete(paquete_dump, conexion, log_kernel);
+    enviar_paquete(paquete_dump, conexion);
     free(pid_proceso);
     // Preguntar que significa "Error"
 
-    recibir_mensaje(conexion, log_kernel);
+    recibir_mensaje(conexion);
 
 
     //Pasar a Exit
@@ -159,20 +159,20 @@ void *syscall_io(void *peticion)
 void *escuchar_cpu()
 {
     char *puerto_escucha_dispatch = config_get_string_value(config_kernel, "PUERTO_ESCUCHA_DISPATCH");
-    int socket_dispatch_listen = iniciar_modulo(puerto_escucha_dispatch, log_kernel);
+    int socket_dispatch_listen = iniciar_modulo(puerto_escucha_dispatch);
     char *puerto_escucha_interrupt = config_get_string_value(config_kernel, "PUERTO_ESCUCHA_INTERRUPT");
-    int socket_interrupt = iniciar_modulo(puerto_escucha_interrupt, log_kernel);
+    int socket_interrupt = iniciar_modulo(puerto_escucha_interrupt);
 
     while (1)
     {
-        int socket_conectado_dispatch = establecer_conexion(socket_dispatch_listen, log_kernel);
-        int socket_conectado_interrupt = establecer_conexion(socket_interrupt, log_kernel);
+        int socket_conectado_dispatch = establecer_conexion(socket_dispatch_listen);
+        int socket_conectado_interrupt = establecer_conexion(socket_interrupt);
 
         // Handshake
-        char *id = recibir_mensaje(socket_conectado_dispatch, log_kernel);
+        char *id = recibir_mensaje(socket_conectado_dispatch);
         char *mensaje = "me llego tu mensaje, un gusto cpu: ";
         strcat(mensaje, id);
-        enviar_mensaje(mensaje, socket_conectado_dispatch, log_kernel);
+        enviar_mensaje(mensaje, socket_conectado_dispatch);
         // Handshake Terminado
         sem_wait(&semaforo_cpu);
         struct Cpu *nueva_cpu;
@@ -218,7 +218,7 @@ void cambio_estado_exit(struct pcb *proceso_a_terminar)
     agregar_a_paquete(paquete_proceso_terminado, mensaje, strlen(mensaje));
 
     agregar_a_paquete(paquete_proceso_terminado, (void *)puntero_pid, sizeof(int));
-    enviar_paquete(paquete_proceso_terminado, conexion_memoria, log_kernel);
+    enviar_paquete(paquete_proceso_terminado, conexion_memoria);
 
     sem_post(&memoria__ocupada);
 
@@ -284,11 +284,11 @@ void planificador_io(struct io *io_asociada)
 
         agregar_a_paquete(paquete_io, (void *)puntero_pid, sizeof(int));
         agregar_a_paquete(paquete_io, (void *)peticion->tiempo, sizeof(int));
-        enviar_paquete(paquete_io, peticion->io_asociada->socket_io, log_kernel);
+        enviar_paquete(paquete_io, peticion->io_asociada->socket_io);
 
         free(puntero_pid);
 
-        char *rta = recibir_mensaje(peticion->io_asociada->socket_io, log_kernel);
+        char *rta = recibir_mensaje(peticion->io_asociada->socket_io);
         if (!strcmp(rta, "Fin de IO")) // O mensaje, no se xd
         {
             free(rta);
@@ -444,19 +444,19 @@ void planificador_io(struct io *io_asociada)
 void *escuchar_io()
 {
     char *puerto_escucha_io = config_get_string_value(config_kernel, "PUERTO_ESCUCHA_IO");
-    int socket_io = iniciar_modulo(puerto_escucha_io, log_kernel);
+    int socket_io = iniciar_modulo(puerto_escucha_io);
     while (1)
     {
-        int socket_conectado_io = establecer_conexion(socket_io, log_kernel);
+        int socket_conectado_io = establecer_conexion(socket_io);
         if (socket_conectado_io < 0)
             abort();
 
         // Handshake
-        char *nombre = recibir_mensaje(socket_conectado_io, log_kernel);
+        char *nombre = recibir_mensaje(socket_conectado_io);
 
         char *mensaje = "me llego tu mensaje, un gusto io ";
         strcat(mensaje, nombre);
-        enviar_mensaje(mensaje, socket_conectado_io, log_kernel);
+        enviar_mensaje(mensaje, socket_conectado_io);
 
         struct io *nueva_io;
 
@@ -505,7 +505,7 @@ void suspender_proceso(struct pcb *proceso)
     *puntero_pid = proceso->PID;
 
     agregar_a_paquete(paquete_dump, (void *)puntero_pid, sizeof(int));
-    enviar_paquete(paquete_dump, conexion, log_kernel);
+    enviar_paquete(paquete_dump, conexion);
     free(puntero_pid);
     sem_post(&memoria__ocupada);
 
@@ -602,9 +602,9 @@ void* planifacion_largo_plazo(void *l)
 
                 char *tamnio_proceso = proceso->tamanio;
                 int conexion_memoria = peticion_memoria();
-                enviar_mensaje(tamnio_proceso, conexion_memoria, log_kernel);
+                enviar_mensaje(tamnio_proceso, conexion_memoria);
 
-                char *rta = recibir_mensaje(conexion_memoria, log_kernel);
+                char *rta = recibir_mensaje(conexion_memoria);
                 if (!strcmp(rta, "Ok"))
                 {
                     free(rta);
@@ -636,8 +636,8 @@ void* planifacion_largo_plazo(void *l)
 
                 char *tamnio_proceso = proceso->tamanio;
                 int conexion_memoria = peticion_memoria();
-                enviar_mensaje(tamnio_proceso, conexion_memoria, log_kernel);
-                char *rta = recibir_mensaje(conexion_memoria, log_kernel);
+                enviar_mensaje(tamnio_proceso, conexion_memoria);
+                char *rta = recibir_mensaje(conexion_memoria);
                 if (!strcmp(rta, "Ok"))
                 {
                     free(rta);
@@ -675,8 +675,8 @@ void* planifacion_largo_plazo(void *l)
                     proceso = (struct pcb *)list_get_minimum((t_list *)lista_sus_ready, encontrar_proceso_pequeño);
                     char *tamnio_proceso = proceso->tamanio;
                     int conexion_memoria = peticion_memoria();
-                    enviar_mensaje(tamnio_proceso, conexion_memoria, log_kernel);
-                    char *rta = recibir_mensaje(conexion_memoria, log_kernel);
+                    enviar_mensaje(tamnio_proceso, conexion_memoria);
+                    char *rta = recibir_mensaje(conexion_memoria);
                     if (!strcmp(rta, "Ok"))
                     {
                         free(rta);
@@ -706,8 +706,8 @@ void* planifacion_largo_plazo(void *l)
                     proceso = (struct pcb *)list_get_minimum((t_list *)lista_new, encontrar_proceso_pequeño);
                     char *tamnio_proceso = proceso->tamanio;
                     int conexion_memoria = peticion_memoria();
-                    enviar_mensaje(tamnio_proceso, conexion_memoria, log_kernel);
-                    char *rta = recibir_mensaje(conexion_memoria, log_kernel);
+                    enviar_mensaje(tamnio_proceso, conexion_memoria);
+                    char *rta = recibir_mensaje(conexion_memoria);
                     if (!strcmp(rta, "Ok"))
                     {
                         free(rta);
@@ -750,7 +750,7 @@ void *escucha_cpu_especifica(void *cpu)
     agregar_a_paquete(proceso_a_ejecutar, &cpu_especifica->proceso->PC, sizeof(int));
 
     t_temporal *rafaga_real_actual = temporal_create();
-    enviar_paquete(proceso_a_ejecutar, cpu_especifica->socket_dispatch, log_kernel);
+    enviar_paquete(proceso_a_ejecutar, cpu_especifica->socket_dispatch);
 
     // [0] = Razón --> 0 = Exit, 1 = Init, 2 = Dump, 3 = I/O, 4 desalojo
     // [1] = Parametro Reservado para el PID
@@ -759,7 +759,7 @@ void *escucha_cpu_especifica(void *cpu)
     // IO --> Disp y tiempo / InitPrco -> Archivo y tamanio
     //
 
-    t_list *paquete_recibido = recibir_paquete(cpu_especifica->socket_dispatch, log_kernel);
+    t_list *paquete_recibido = recibir_paquete(cpu_especifica->socket_dispatch);
 
     while (*((int *)list_get(paquete_recibido, 0)) == 1)
     {
@@ -902,7 +902,7 @@ void *escucha_cpu_especifica(void *cpu)
         
         list_destroy_and_destroy_elements(paquete_recibido, free);
 
-        paquete_recibido = recibir_paquete(cpu_especifica->socket_dispatch, log_kernel);
+        paquete_recibido = recibir_paquete(cpu_especifica->socket_dispatch);
     }
 
     return NULL;
@@ -1020,7 +1020,7 @@ void *planificacion_corto_plazo(void * c)
                     struct Cpu *cpu_buscada = encontrar_cpu_especifica_en_ejecucion(lista_cpu, proceso_a_desalojar->PID);
                     char *mensaje_cpu = "DESALOJAR";
 
-                    enviar_mensaje(mensaje_cpu, cpu_buscada->socket_interrupt, log_kernel);
+                    enviar_mensaje(mensaje_cpu, cpu_buscada->socket_interrupt);
                     sem_wait(&proceso_desalojado);
 
                     cambio_estado_execute(cpu_buscada, proceso);
