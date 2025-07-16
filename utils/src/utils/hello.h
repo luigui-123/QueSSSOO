@@ -40,23 +40,23 @@ typedef struct
 
 void saludar(char* quien);
 
-int iniciar_modulo(char* puerto, t_log* log_modulo);
+int iniciar_modulo(char* puerto);
 
-int iniciar_conexion(char* ip, char* puerto,t_log* log_modulo);
+int iniciar_conexion(char* ip, char* puerto);
 
-int establecer_conexion(int socket_servidor,t_log* log_modulo);
+int establecer_conexion(int socket_servidor);
 
 //void enviar_mensaje(char* mensaje, int socket_cliente);
 
-void enviar_mensaje(char* mensaje, int socket_cliente,t_log* log_modulo);
+void enviar_mensaje(char* mensaje, int socket_cliente);
 
-char* recibir_mensaje(int socket_cliente,t_log* log_modulo);
+char* recibir_mensaje(int socket_cliente);
 
-void reenviar_mensaje(int socket_cliente,int socket_servidor,t_log * log_modulo);
+void reenviar_mensaje(int socket_cliente,int socket_servidor);
 
-t_list* recibir_paquete(int socket_cliente, t_log * log_modulo);
+t_list* recibir_paquete(int socket_cliente);
 
-void enviar_paquete(t_paquete* paquete, int socket_cliente, t_log* log_modulo);
+void enviar_paquete(t_paquete* paquete, int socket_cliente);
 
 void agregar_a_paquete(t_paquete* paquete, void* valor, int tamanio);
 
