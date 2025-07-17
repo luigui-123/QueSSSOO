@@ -62,6 +62,7 @@ sem_t procesos_creados;
 sem_t proceso_desalojado;
 sem_t memoria__ocupada;
 sem_t procesos_listos;
+sem_t proceso_terminando;
 
 struct Cpu
 {
@@ -86,9 +87,9 @@ struct peticion_io
     int pid;
 };
 
-t_config *iniciar_config()
+t_config *iniciar_config(char* ruta)
 {
-    t_config *nuevo_config = config_create("kernel.conf");
+    t_config *nuevo_config = config_create(ruta);
     return nuevo_config;
 }
 
@@ -97,6 +98,11 @@ int peticion_memoria()
     char *puerto_memoria = config_get_string_value(config_kernel, "PUERTO_MEMORIA");
     char *ip_memoria = config_get_string_value(config_kernel, "IP_MEMORIA");
     int conexion_memoria = iniciar_conexion(ip_memoria, puerto_memoria);
+
+    t_list* Handshake = recibir_paquete(conexion_memoria);
+
+    list_destroy_and_destroy_elements(Handshake, free);
+
     return conexion_memoria;
 }
 
@@ -106,7 +112,7 @@ void cambio_estado_ready(struct pcb *proceso)
     queue_push(lista_ready, proceso);
     sem_post(&semaforo_ready);
 
-    sem_post(&procesos_listos);
+    sem_post(&procesos_listos); 
 }
 
 void cambio_estado_exit(struct pcb *proceso_a_terminar)
@@ -125,28 +131,33 @@ void cambio_estado_exit(struct pcb *proceso_a_terminar)
 
     agregar_a_paquete(paquete_proceso_terminado, (void *)puntero_pid, sizeof(int));
     enviar_paquete(paquete_proceso_terminado, conexion_memoria);
+    
+    char* rta = recibir_mensaje(conexion_memoria);
+    if (strcmp(rta, "Ok"))
+    {
+        free(rta);
+        sem_post(&memoria__ocupada);
 
-    sem_post(&memoria__ocupada);
+        log_trace(log_kernel, "%d - Finaliza el proceso", proceso_a_terminar->PID);
 
-    log_trace(log_kernel, "%d - Finaliza el proceso", proceso_a_terminar->PID);
+        // LOG innecesariamente largo del TP:
+        log_trace(log_kernel, "## (%d) - Métricas de estado: NEW (%d) (%.2lu), READY (%d) (%.2lu), EXECUTE (%d) (%.2lu), BLOCKED (%d) (%.2lu), SUSPENDED BLOCKED (%d) (%.2lu), SUSPENDED READY (%d) (%.2lu), EXIT (%d) (%.2lu)",
+                proceso_a_terminar->PID,
+                proceso_a_terminar->ME[0], proceso_a_terminar->MT[0],
+                proceso_a_terminar->ME[1], proceso_a_terminar->MT[1],
+                proceso_a_terminar->ME[2], proceso_a_terminar->MT[2],
+                proceso_a_terminar->ME[3], proceso_a_terminar->MT[3],
+                proceso_a_terminar->ME[4], proceso_a_terminar->MT[4],
+                proceso_a_terminar->ME[5], proceso_a_terminar->MT[5],
+                proceso_a_terminar->ME[6], proceso_a_terminar->MT[6]);
 
-    // LOG innecesariamente largo del TP:
-    log_trace(log_kernel, "## (%d) - Métricas de estado: NEW (%d) (%.2lu), READY (%d) (%.2lu), EXECUTE (%d) (%.2lu), BLOCKED (%d) (%.2lu), SUSPENDED BLOCKED (%d) (%.2lu), SUSPENDED READY (%d) (%.2lu), EXIT (%d) (%.2lu)",
-              proceso_a_terminar->PID,
-              proceso_a_terminar->ME[0], proceso_a_terminar->MT[0],
-              proceso_a_terminar->ME[1], proceso_a_terminar->MT[1],
-              proceso_a_terminar->ME[2], proceso_a_terminar->MT[2],
-              proceso_a_terminar->ME[3], proceso_a_terminar->MT[3],
-              proceso_a_terminar->ME[4], proceso_a_terminar->MT[4],
-              proceso_a_terminar->ME[5], proceso_a_terminar->MT[5],
-              proceso_a_terminar->ME[6], proceso_a_terminar->MT[6]);
+        queue_push(lista_finished, proceso_a_terminar);
+        temporal_destroy(proceso_a_terminar->tiempo_estado);
 
-    queue_push(lista_finished, proceso_a_terminar);
-    temporal_destroy(proceso_a_terminar->tiempo_estado);
-
-    list_destroy_and_destroy_elements(paquete_proceso_terminado, free);
-
-    return;
+        list_destroy_and_destroy_elements((t_list*)paquete_proceso_terminado, free);
+    }
+    else
+        abort();
 }
 
 struct pcb *encontrar_proceso_especifico(t_queue *lista, int pid)
@@ -165,6 +176,11 @@ void syscall_init_procc(int tamanio, char *nombre)
     struct pcb *proceso_nuevo;
 
     proceso_nuevo = malloc(sizeof(struct pcb));
+    if (tamanio < 0)
+        return;
+    
+    if (strcmp(nombre, ""))
+        return;
 
     proceso_nuevo->PID = contador_procesos;
     proceso_nuevo->tamanio = tamanio;
@@ -183,6 +199,7 @@ void syscall_init_procc(int tamanio, char *nombre)
 
     sem_post(&semaforo_new);
     sem_post(&procesos_creados);
+    return;
 }
 
 void syscall_dump_memory(int *pid_proceso)
@@ -199,7 +216,7 @@ void syscall_dump_memory(int *pid_proceso)
     enviar_paquete(paquete_dump, conexion);
     free(pid_proceso);
     // Preguntar que significa "Error"
-    list_destroy_and_destroy_elements(paquete_dump, free);
+    list_destroy_and_destroy_elements((t_list*)paquete_dump, free);
 
     char *mensaje = recibir_mensaje(conexion);
 
@@ -223,6 +240,9 @@ void syscall_dump_memory(int *pid_proceso)
         {
 
             struct pcb *proceso_usado = encontrar_proceso_especifico(lista_sus_bloqued, pid);
+
+            if (!proceso_usado)
+                abort();
 
             sem_wait(&semaforo_bloqued_sus);
             list_remove_element((t_list *)lista_sus_bloqued, proceso_usado);
@@ -358,14 +378,11 @@ void planificador_io(struct io *io_asociada)
 
         agregar_a_paquete(paquete_io, (void *)puntero_pid, sizeof(int));
         agregar_a_paquete(paquete_io, (void *)peticion->tiempo, sizeof(int));
-        enviar_paquete(paquete_io, peticion->io_asociada->socket_io);
-
-        free(puntero_pid);
-
-        char *rta = recibir_mensaje(peticion->io_asociada->socket_io);
-        if (!strcmp(rta, "Fin de IO")) // O mensaje, no se xd
+        if (enviar_paquete(paquete_io, peticion->io_asociada->socket_io))
         {
-            free(rta);
+            free(puntero_pid);
+            recibir_mensaje(peticion->io_asociada->socket_io);
+
             sem_wait(&semaforo_bloqued);
             struct pcb *proceso = encontrar_proceso_especifico(lista_bloqued, peticion->pid);
             log_trace(log_kernel, "%d - Finalizo IO y pasa a READY", proceso->PID);
@@ -410,10 +427,8 @@ void planificador_io(struct io *io_asociada)
             free(peticion);
             peticion = NULL;
         }
-
         else
         {
-            free(rta);
             sem_wait(&semaforo_io);
 
             list_remove_element((t_list *)lista_io, peticion->io_asociada);
@@ -510,7 +525,7 @@ void planificador_io(struct io *io_asociada)
                 }
             }
         }
-        list_destroy_and_destroy_elements(paquete_io, free);
+        list_destroy_and_destroy_elements((t_list*) paquete_io, free);
     }
 }
 
@@ -588,7 +603,7 @@ void suspender_proceso(struct pcb *proceso)
 
     recibir_mensaje(conexion);
 
-    list_destroy_and_destroy_elements(paquete_dump, free);
+    list_destroy_and_destroy_elements((t_list*)paquete_dump, free);
 
     return;
 }
@@ -654,6 +669,8 @@ void cambio_estado_bloqued(int pid, int pc)
     proceso_a_bloquear->ME[3] += 1;
     temporal_stop(proceso_a_bloquear->tiempo_estado);
     proceso_a_bloquear->MT[2] += temporal_gettime(proceso_a_bloquear->tiempo_estado);
+    temporal_destroy(proceso_a_bloquear->tiempo_estado);
+
     proceso_a_bloquear->tiempo_estado = temporal_create();
 
     sem_wait(&semaforo_bloqued);
@@ -675,20 +692,18 @@ void *planifacion_largo_plazo(void *l)
 
         if (strcmp(tipo_planificacion, "FIFO") == 0)
         {
-            // cambio_estado_ready();
             if (!queue_is_empty(lista_sus_ready))
             {
                 sem_wait(&semaforo_ready_sus);
                 proceso = (struct pcb *)queue_peek(lista_sus_ready);
 
-                // int tamnio_proceso = proceso->tamanio;
                 int conexion_memoria = peticion_memoria();
 
                 t_paquete *paquete_proceso = crear_paquete();
 
                 int *puntero_pid = malloc(sizeof(int));
                 *puntero_pid = proceso->PID;
-
+                
                 int codigo = 2;
                 agregar_a_paquete(paquete_proceso, &codigo, sizeof(int));
 
@@ -696,7 +711,7 @@ void *planifacion_largo_plazo(void *l)
                 enviar_paquete(paquete_proceso, conexion_memoria);
 
                 char *rta = recibir_mensaje(conexion_memoria);
-                list_destroy_and_destroy_elements(paquete_proceso, free);
+                list_destroy_and_destroy_elements((t_list*)paquete_proceso, free);
 
                 if (strcmp(rta, "Ok"))
                 {
@@ -718,8 +733,7 @@ void *planifacion_largo_plazo(void *l)
                 {
                     free(rta);
                     sem_post(&semaforo_ready_sus);
-                    sem_wait(&memoria__ocupada); //
-                    // Semaforo de no hay mas espacio en memoria
+                    sem_wait(&memoria__ocupada); 
                 }
             }
             else if (!queue_is_empty(lista_new))
@@ -747,7 +761,7 @@ void *planifacion_largo_plazo(void *l)
                 enviar_paquete(paquete_proceso, conexion_memoria);
 
                 char *rta = recibir_mensaje(conexion_memoria);
-                list_destroy_and_destroy_elements(paquete_proceso, free);
+                list_destroy_and_destroy_elements((t_list*)paquete_proceso, free);
 
                 if (strcmp(rta, "Ok"))
                 {
@@ -761,13 +775,12 @@ void *planifacion_largo_plazo(void *l)
 
                     log_trace(log_kernel, "%d - Pasa del estado New al Estado Ready", proceso->PID);
 
-                    cambio_estado_ready(proceso); // Y algo mas...
+                    cambio_estado_ready(proceso); 
                 }
                 else
                 {
                     sem_post(&semaforo_new);
                     sem_wait(&memoria__ocupada);
-                    // Semaforo de no hay mas espacio en memoria
                 }
             }
             else
@@ -782,9 +795,8 @@ void *planifacion_largo_plazo(void *l)
             {
                 if (!queue_is_empty(lista_sus_ready))
                 {
-                    // Iterar cada elemento de ambas listas y sacar el mas pequeño.
                     proceso = (struct pcb *)list_get_minimum((t_list *)lista_sus_ready, encontrar_proceso_pequeño);
-                    // int tamnio_proceso = proceso->tamanio;
+
                     int conexion_memoria = peticion_memoria();
 
                     t_paquete *paquete_proceso = crear_paquete();
@@ -799,9 +811,9 @@ void *planifacion_largo_plazo(void *l)
                     enviar_paquete(paquete_proceso, conexion_memoria);
 
                     char *rta = recibir_mensaje(conexion_memoria);
-                    list_destroy_and_destroy_elements(paquete_proceso, free);
+                    list_destroy_and_destroy_elements((t_list*)paquete_proceso, free);
 
-                    if (!strcmp(rta, "Ok"))
+                    if (strcmp(rta, "Ok"))
                     {
                         free(rta);
                         sem_post(&semaforo_ready_sus);
@@ -813,7 +825,7 @@ void *planifacion_largo_plazo(void *l)
 
                         log_trace(log_kernel, "%d - Pasa del estado Suspended Ready al Estado Ready", proceso->PID);
 
-                        cambio_estado_ready(proceso); // Y algo mas...
+                        cambio_estado_ready(proceso);
                         pudo_incertar = true;
                     }
                     else
@@ -848,7 +860,7 @@ void *planifacion_largo_plazo(void *l)
                     enviar_paquete(paquete_proceso, conexion_memoria);
 
                     char *rta = recibir_mensaje(conexion_memoria);
-                    list_destroy_and_destroy_elements(paquete_proceso, free);
+                    list_destroy_and_destroy_elements((t_list*)paquete_proceso, free);
 
                     if (strcmp(rta, "Ok"))
                     {
@@ -862,7 +874,7 @@ void *planifacion_largo_plazo(void *l)
 
                         log_trace(log_kernel, "%d - Pasa del estado New al Estado Ready", proceso->PID);
 
-                        cambio_estado_ready(proceso); // Y algo mas...
+                        cambio_estado_ready(proceso); 
                         pudo_incertar = true;
                     }
                     else
@@ -910,22 +922,22 @@ void *escucha_cpu_especifica(void *cpu)
 
         if (*((int *)list_get(paquete_recibido, 0)) == 0) // Exit --> TERMINA proceso, no interrumpe
         {
-            // revisar para Listas.
-            // ESto mandarlo a Execute -> Exit
+        
 
-            log_trace(log_kernel, "%d - solicitó syscall: Exit", pid_proceso_usado); // Proceso para enviar metricas
-            sem_post(&semaforo_new);
-
-            log_trace(log_kernel, "%d - Pasa del estado Execute al Estado Exit", pid_proceso_usado);
+            log_trace(log_kernel, "%d - solicitó syscall: Exit", pid_proceso_usado); 
 
             sem_wait(&semaforo_execute);
             struct pcb *proceso_a_terminar = encontrar_proceso_especifico(lista_execute, pid_proceso_usado);
             list_remove_element((t_list *)lista_execute, proceso_a_terminar);
             sem_post(&semaforo_execute);
+            
+
             temporal_stop(proceso_a_terminar->tiempo_estado);
 
             proceso_a_terminar->MT[2] += temporal_gettime(proceso_a_terminar->tiempo_estado);
-
+            temporal_destroy(proceso_a_terminar->tiempo_estado);
+            
+            log_trace(log_kernel, "%d - Pasa del estado Execute al Estado Exit", pid_proceso_usado);
             cambio_estado_exit(proceso_a_terminar);
 
             cpu_especifica->ocupado = 0;
@@ -936,9 +948,12 @@ void *escucha_cpu_especifica(void *cpu)
         else if (*((int *)list_get(paquete_recibido, 0)) == 1) // Init
         {
             log_trace(log_kernel, "%d - solicitó syscall: Init Procc", pid_proceso_usado);
-            syscall_init_procc(list_get(paquete_recibido, 3), list_get(paquete_recibido, 4));
+            
+            syscall_init_procc(*(int *)list_get(paquete_recibido, 4), list_get(paquete_recibido, 3));
 
-            // Meter mensaje a CPU
+            enviar_mensaje("Creado", cpu_especifica->socket_dispatch);
+
+
         }
         else if (*((int *)list_get(paquete_recibido, 0)) == 2) // Dump
         {
@@ -1028,6 +1043,9 @@ void *escucha_cpu_especifica(void *cpu)
 
             actualizar_rafaga(encontrar_proceso_especifico(lista_execute, pid_proceso_usado), tiempo_real);
             struct pcb *proceso_a_desalojar = encontrar_proceso_especifico(lista_execute, pid_proceso_usado);
+            
+            proceso_a_desalojar->PC = pc_proceso_usado;
+
             log_trace(log_kernel, "%d - Desalojado por algoritmo SJF/SRT", pid_proceso_usado);
 
             log_trace(log_kernel, "%d - Pasa del estado Execute al Estado Ready", pid_proceso_usado);
@@ -1053,7 +1071,7 @@ void cambio_estado_execute(struct Cpu *cpu, struct pcb *proceso)
     sem_wait(&semaforo_execute);
     queue_push(lista_execute, proceso);
     sem_post(&semaforo_execute);
-    // mutex
+
     log_trace(log_kernel, "%d - Pasa del estado Execute al Estado Ready", proceso->PID);
 
     proceso->ME[2] += 1;
@@ -1114,7 +1132,6 @@ void *planificacion_corto_plazo(void *c)
             else
                 abort();
 
-            // Lo mejor seria un semaforo cuando termine algun proceso o meter un while?
             sem_post(&semaforo_cpu);
         }
         else if (strcmp(tipo_planificacion, "SJF") == 0)
@@ -1133,6 +1150,7 @@ void *planificacion_corto_plazo(void *c)
             }
             else
                 abort();
+    
             sem_post(&semaforo_cpu);
         }
         else if (strcmp(tipo_planificacion, "SRT") == 0)
@@ -1141,15 +1159,19 @@ void *planificacion_corto_plazo(void *c)
             struct Cpu *cpu_libre = (struct Cpu *)list_find(lista_cpu, buscar_disponible);
             if (cpu_libre)
             {
-                proceso = list_get_minimum((t_list *)lista_ready, comparar_rafaga);
                 sem_wait(&semaforo_ready);
-                proceso = queue_pop(lista_ready);
+                proceso = list_get_minimum((t_list *)lista_ready, comparar_rafaga);
+                list_remove_element((t_list *)lista_ready, proceso);
                 sem_post(&semaforo_ready);
                 cambio_estado_execute(cpu_libre, proceso);
             }
             else
             {
+                sem_wait(&semaforo_ready);
                 proceso = list_get_minimum((t_list *)lista_ready, comparar_rafaga);
+                sem_post(&semaforo_ready);
+
+                sem_wait(&semaforo_execute);
                 struct pcb *proceso_a_desalojar = list_get_maximum((t_list *)lista_execute, comparar_rafaga);
 
                 if (proceso->rafaga < proceso_a_desalojar->rafaga)
@@ -1160,8 +1182,14 @@ void *planificacion_corto_plazo(void *c)
 
                     enviar_mensaje(mensaje_cpu, cpu_buscada->socket_interrupt);
                     sem_wait(&proceso_desalojado);
+                    
+                    sem_post(&semaforo_execute);
 
-                    cambio_estado_execute(cpu_buscada, proceso);
+                    cambio_estado_execute(cpu_buscada, proceso);    
+                }
+                else
+                {
+                    sem_post(&procesos_listos);
                 }
             }
             sem_post(&semaforo_cpu);
@@ -1204,12 +1232,12 @@ int main(int argc, char *argv[])
     sem_init(&procesos_listos, 1, 0);
 
     // Kernel "Core" 10/10 Joke
-    config_kernel = iniciar_config("kernel");
+    config_kernel = iniciar_config(argv[1]);
     log_kernel = log_create("kernel.log", "kernel", false, LOG_LEVEL_INFO);
     contador_procesos = 0;
 
     char *nombreArchivo = NULL;
-    int tamanioProceso = NULL;
+    int tamanioProceso = 0;
 
     pthread_t servidor_cpu;
     pthread_create(&servidor_cpu, NULL, escuchar_cpu, NULL);
@@ -1236,8 +1264,12 @@ int main(int argc, char *argv[])
         log_trace(log_kernel, "Error, Parametros Invalidos");
         return 1;
     }
-    nombreArchivo = argv[1];
-    tamanioProceso = argv[2];
+    nombreArchivo = argv[2];
+
+    
+    tamanioProceso = atoi(argv[3]);
+    
+
     getchar();
     syscall_init_procc(tamanioProceso, nombreArchivo);
 
