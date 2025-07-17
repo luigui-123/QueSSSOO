@@ -28,6 +28,7 @@
 #define ACCEDER_TABLA 4
 #define LEER_PAG 5
 #define ACTUALIZAR_PAG 6
+#define ACTUALIZAR_PAG_COM 12
 #define MEMORY_DUMP 7
 #define TAREA 8
 #define CORTAR 9
@@ -80,7 +81,7 @@ struct pcb // proceso
 };
 
 // Funciones que funcionan
-void iniciar_config(char* vector)
+void iniciar_config(char *vector)
 {
     nuevo_conf = config_create(vector);
 
@@ -158,7 +159,6 @@ t_list *generarTablaTamaño(int tam)
         }
 
         list_destroy(listaPaginas);
-        // log_trace(log_memo, "La cant de elementos del nivel %d es %d", i, list_size(tabla));
 
         if (i < CANTIDAD_NIVELES)
         {
@@ -264,7 +264,6 @@ void crear_proceso(char *archivo, int tamanio_casteado, int num_proceso)
 void peticion_creacion(int tamanio, char *archivo, int PDI, int *socket)
 {
     sem_wait(&creacion);
-    t_paquete *paquete = crear_paquete();
     char *mensaje;
     if (tamanio < 0 || tamanio > TAM_MEMORIA_ACTUAL)
     {
@@ -283,10 +282,8 @@ void peticion_creacion(int tamanio, char *archivo, int PDI, int *socket)
         crear_proceso(archivo, tamanio, PDI);
         mensaje = "OK";
     }
-    //agregar_a_paquete(paquete, (void *)mensaje, sizeof(char) * 2);
-    //enviar_paquete(paquete, *socket, log_memo);
-    //free(mensaje);
-    eliminar_paquete(paquete);
+    enviar_mensaje(mensaje,*socket);
+    // free(mensaje);
     sem_post(&creacion);
     return;
 }
@@ -349,28 +346,23 @@ void enviar_instruccion(int pro, int instruccion, int *socket)
     struct pcb *proceso = find_by_PID(lista_procesos, pro);
     // log_trace(log_memo, "Guardar %s\n", (char *)list_get(proceso->lista_instrucciones, instruccion));
     //  Envia list_get(proceso->lista_instrucciones, instruccion)
-    char* cadena;
-    t_paquete* paquete=crear_paquete();
+    char *cadena;
     if (instruccion < list_size(proceso->lista_instrucciones))
     {
-        cadena=string_duplicate((char *)list_get(proceso->lista_instrucciones, instruccion));
+        cadena = string_duplicate((char *)list_get(proceso->lista_instrucciones, instruccion));
         proceso->instruccionSolicitada += 1;
         log_trace(log_memo, "## PID: %d - Obtener instrucción: %d - Instrucción: %s", proceso->PID, instruccion + 1, cadena);
-        //agregar_a_paquete(paquete,cadena,sizeof(char)*256);
-    
     }
     else
     {
-        cadena="NO";
-        //agregar_a_paquete(paquete,cadena,sizeof(char)*2);
+        cadena = "NO";
     }
-    //enviar_paquete(paquete, *socket, log_memo);
-    eliminar_paquete(paquete);
+    enviar_mensaje(cadena,*socket);
     free(cadena);
     return;
 }
 
-void eliminar_proceso(int i)
+void eliminar_proceso(int i,int * socket)
 {
 
     bool mismoPDI(void *pdi)
@@ -388,6 +380,8 @@ void eliminar_proceso(int i)
     // Destrucción de Proceso: “## PID: <PID> - Proceso Destruido - Métricas - Acc.T.Pag: <ATP>; Inst.Sol.: <Inst.Sol.>; SWAP: <SWAP>; Mem.Prin.: <Mem.Prin.>; Lec.Mem.: <Lec.Mem.>; Esc.Mem.: <Esc.Mem.>”
     log_trace(log_memo, "## PID %d - Proceso Destruido - Métricas - Acc.T.Pag: %d; Inst.Sol.: %d; SWAP: %d; Mem.Prin.: %d; Lec.Mem.: %d; Esc.Mem.: %d", proceso->PID, proceso->accesoTablaPag, proceso->instruccionSolicitada, proceso->bajadaSWAP, proceso->subidasMemo, proceso->cantLecturas, proceso->cantEscrituras);
     free(proceso);
+    char* mensaje="OK";
+    enviar_mensaje(mensaje,*socket);
     return;
 }
 
@@ -430,14 +424,14 @@ void tabla_a_archivo(t_list *tabla, int nivel_actual, int nivel_max, FILE *swap)
     return;
 }
 
-void suspender(int i)
+void suspender(int i, int *socket)
 {
     struct pcb *proceso = find_by_PID(lista_procesos, i);
     int tam = proceso->tamanio;
     int PID = proceso->PID;
     FILE *swap;
     sem_wait(&memo_swap);
-    if ( (swap = fopen(PATH_SWAPFILE, "ab")) )
+    if ((swap = fopen(PATH_SWAPFILE, "ab")))
     {
         usleep(RETARDO_SWAP * 100);
         // log_trace(log_memo,"archivo abierto escritura");
@@ -449,13 +443,14 @@ void suspender(int i)
         sem_post(&memo_swap);
         proceso->Tabla_Pag = NULL;
         TAM_MEMORIA_ACTUAL += tam;
+        char* mensaje="OK";
+        enviar_mensaje(mensaje,*socket);
     }
     return;
 }
 
 void desuspender(int i, int *socket)
 {
-    t_paquete *paquete = crear_paquete();
     char *mensaje;
     struct pcb *proceso = find_by_PID(lista_procesos, i);
     if (proceso->tamanio > TAM_MEMORIA_ACTUAL)
@@ -498,10 +493,7 @@ void desuspender(int i, int *socket)
         }
         mensaje = "OK";
     }
-    //agregar_a_paquete(paquete, (void *)mensaje, sizeof(char) * 2);
-    //enviar_paquete(paquete, *socket, log_memo);
-    //free(mensaje);
-    eliminar_paquete(paquete);
+    enviar_mensaje(mensaje,*socket);
     return;
 }
 
@@ -509,6 +501,8 @@ void acceso_tabla_paginas(t_list *tabla, int pag[], int nivel_actual, int *acces
 {
     // Esperar tiempo espera
     // log_trace(log_memo, "la pag tiene %d paginas y se pide acceder a la %d", list_size(tabla), pag[nivel_actual - 1] + 1);
+
+    t_paquete * paquete=crear_paquete();
 
     if (pag[nivel_actual - 1] < list_size(tabla))
     {
@@ -522,21 +516,18 @@ void acceso_tabla_paginas(t_list *tabla, int pag[], int nivel_actual, int *acces
         else
         {
             int *marco = list_get(tabla, pag[nivel_actual - 1]);
-            log_trace(log_memo, "el marco es %d", *marco);
-            t_paquete *paquete = crear_paquete();
-            //agregar_a_paquete(paquete, marco, sizeof(int)); // TODO Le quito el * a marco. Fijarse si va todo joya gucci de rucu
-            //enviar_paquete(paquete, *socket,log_memo);
-            eliminar_paquete(paquete);
+            // log_trace(log_memo, "el marco es %d", *marco);
+            agregar_a_paquete(paquete,(void*)marco,sizeof(int));
         }
     }
     else
     {
-        int error = -1;
-        t_paquete *paquete = crear_paquete();
-        //agregar_a_paquete(paquete, &error, sizeof(int)); // TODO Fijarse si funciona
-        //enviar_paquete(paquete, *socket, log_memo);
-        eliminar_paquete(paquete);
+        int error=-1;
+        agregar_a_paquete(paquete,(void*)&error,sizeof(int));
+
     }
+    enviar_paquete(paquete,*socket);
+    eliminar_paquete(paquete);
     return;
 }
 
@@ -569,7 +560,7 @@ void dumpeo(t_list *tabla, int nivel_actual, int nivel_max, FILE *dump)
             {
                 int *pag = list_get(elemento, inc);
                 sem_wait(&memo_usuario);
-                fwrite((char*)(MEMORIA_USUARIO + ((*pag) * TAM_PAGINA)), sizeof(char) * TAM_PAGINA, 1, dump);
+                fwrite((char *)(MEMORIA_USUARIO + ((*pag) * TAM_PAGINA)), sizeof(char) * TAM_PAGINA, 1, dump);
                 sem_post(&memo_usuario);
                 inc++;
             }
@@ -578,7 +569,7 @@ void dumpeo(t_list *tabla, int nivel_actual, int nivel_max, FILE *dump)
     return;
 }
 
-void dump_memory(int pro)
+void dump_memory(int pro,int* socket)
 {
     struct pcb *proceso = find_by_PID(lista_procesos, pro);
     FILE *dump;
@@ -591,6 +582,7 @@ void dump_memory(int pro)
     char *fecha = temporal_get_string_time("-%H:%M:%S.dmp");
     strcat(archivo, fecha);
     char *tam = string_itoa(proceso->tamanio);
+    char* mensaje;
     if ((dump = fopen(archivo, "w")) != NULL)
     {
         txt_write_in_file(dump, tam);
@@ -599,12 +591,17 @@ void dump_memory(int pro)
         dumpeo(proceso->Tabla_Pag, 1, CANTIDAD_NIVELES, dump);
         // sem_post(&memo_usuario);
         fclose(dump);
+        mensaje="OK";
+    }
+    else{
+        mensaje="NO";
     }
     free(archivo);
     free(fecha);
     free(num_pro);
     free(tam);
     log_trace(log_memo, "## PID: %d - Memory Dump solicitado", proceso->PID);
+    enviar_mensaje(mensaje,*socket);
     return;
 }
 
@@ -629,11 +626,8 @@ void leer_pag_por_tam(int pro, int marco, int tam, int *socket)
 {
     if (tam > TAM_PAGINA)
     {
-        t_paquete *paquete = crear_paquete();
         char *cadena = "NO";
-        //agregar_a_paquete(paquete, (void *)cadena, sizeof(char) * 2);
-        //enviar_paquete(paquete, *socket,log_memo);
-        eliminar_paquete(paquete);
+        enviar_mensaje(cadena,*socket);
     }
     else
     {
@@ -642,17 +636,15 @@ void leer_pag_por_tam(int pro, int marco, int tam, int *socket)
         // memset(cadena,0,TAM_PAGINA);
         // strcpy(cadena,MEMORIA_USUARIO);
         sem_wait(&memo_usuario);
-        memcpy(cadena, (char*)(MEMORIA_USUARIO + (marco * TAM_PAGINA)), tam);
+        memcpy(cadena, (char *)(MEMORIA_USUARIO + (marco * TAM_PAGINA)), tam);
         sem_post(&memo_usuario);
         strcat(cadena, "\0");
         log_trace(log_memo, "Se pide enviar la cadena %s", cadena);
         proceso->cantLecturas++;
         log_trace(log_memo, "## PID: %d - Lectura - Dir. Física: %d - Tamaño: %d", proceso->PID, ((marco * TAM_PAGINA)), tam);
         // log_trace(log_memo, "%s", cadena);
-        t_paquete *paquete = crear_paquete();
-        //agregar_a_paquete(paquete, (void *)cadena, sizeof(char) * tam);
-        //enviar_paquete(paquete, *socket,log_memo);
-        eliminar_paquete(paquete);
+        
+        enviar_mensaje(cadena,*socket);
         free(cadena);
     }
     return;
@@ -660,7 +652,6 @@ void leer_pag_por_tam(int pro, int marco, int tam, int *socket)
 
 void actualizar_pag_completa(int pro, int dir, int tam, char *cont, int *socket)
 {
-    t_paquete *paquete = crear_paquete();
     char *cadena;
     if (tam > TAM_PAGINA)
     {
@@ -674,122 +665,154 @@ void actualizar_pag_completa(int pro, int dir, int tam, char *cont, int *socket)
         memcpy(MEMORIA_USUARIO + (dir * TAM_PAGINA), cont, tam * sizeof(char));
         sem_post(&memo_usuario);
         proceso->cantEscrituras++;
-        log_trace(log_memo, "## PID: %d - Escritura - Dir. Física: %d - Tamaño: %d", proceso->PID, ( (dir * TAM_PAGINA)), tam);
+        log_trace(log_memo, "## PID: %d - Escritura - Dir. Física: %d - Tamaño: %d", proceso->PID, ((dir * TAM_PAGINA)), tam);
 
         cadena = "OK";
     }
-    //agregar_a_paquete(paquete, (void *)cadena, sizeof(char) * 2);
-    //enviar_paquete(paquete, *socket,log_memo);
-    eliminar_paquete(paquete);
-    //free(cadena);
+    enviar_mensaje(cadena,*socket);
+    // free(cadena);
     return;
 }
-/*
+
 void *ingresar_conexion(void *socket_void)
 {
-    log_trace(log_memo,"1entre a ingresar");
     int socket = *((int *)socket_void);
     free(socket_void);
 
-    //while (1)
-    //{
-        log_trace(log_memo,"entre a ingresar");
-        t_list *partes = recibir_paquete(socket,log_memo);
-        // recibir mensaje
-        // Dividir mensaje
-        int *tarea = list_get(partes, 0);
-        log_trace(log_memo,"la operacion es %d",*((int *)list_get(partes, 0)));
-        int *PID = list_get(partes, 1);
+    t_paquete *paquete = crear_paquete();
+    agregar_a_paquete(paquete, (void *)&TAM_PAGINA, sizeof(int));
+    agregar_a_paquete(paquete, (void *)&CANTIDAD_NIVELES, sizeof(int));
+    agregar_a_paquete(paquete, (void *)&ENTRADAS_POR_TABLA, sizeof(int));
+    enviar_paquete(paquete, socket);
+    eliminar_paquete(paquete);
+
+    while (1)
+    {
+        t_list *partes = recibir_paquete(socket);
+        if (list_is_empty(partes))
+        {
+            return NULL;
+        }
+
+        int *tarea = (int *)list_get(partes, 0);
+        int *PID = (int *)list_get(partes, 1);
+        int *tam_proceso;
+        char *archivo;
+        int *entradas;
+        int *direccion_fisica;
+        int *tam_leer_escribir;
+        char *mensaje_a_escribir;
+        int *num_tarea;
+
         switch (*tarea)
         {
-            // serializar_paquete(t_paquete* paquete, int bytes)
+            // Kernel
         case PROCESO_NUEVO:
-            int *tam = list_get(partes, 2);
-            char *archivo = list_get(partes, 3);
-            peticion_creacion(*tam, archivo, *PID, &socket);
+            log_trace(log_memo, "## Kernel Conectado - FD del socket: %d", socket);
+            tam_proceso = (int *)list_get(partes, 2);
+            archivo = string_duplicate((char *)list_get(partes, 3));
+            peticion_creacion(*tam_proceso, archivo, *PID, &socket);
             free(archivo);
-            break;
+            list_destroy_and_destroy_elements(partes, free);
+            return NULL;
         case SUSPENDER:
-            suspender(*PID);
-            break;
+            log_trace(log_memo, "## Kernel Conectado - FD del socket: %d", socket);
+            suspender(*PID,&socket);
+            list_destroy_and_destroy_elements(partes, free);
+            return NULL;
         case DES_SUSPENDER:
+            log_trace(log_memo, "## Kernel Conectado - FD del socket: %d", socket);
             desuspender(*PID, &socket);
-            break;
+            list_destroy_and_destroy_elements(partes, free);
+            return NULL;
         case FINALIZAR:
-            eliminar_proceso(*PID);
-            break;
+            log_trace(log_memo, "## Kernel Conectado - FD del socket: %d", socket);
+            eliminar_proceso(*PID,&socket);
+            list_destroy_and_destroy_elements(partes, free);
+            return NULL;
+        case MEMORY_DUMP:
+            log_trace(log_memo, "## Kernel Conectado - FD del socket: %d", socket);
+            dump_memory(*PID,&socket);
+            list_destroy_and_destroy_elements(partes, free);
+            return NULL;
+
+            // CPU
         case ACCEDER_TABLA:
-            int *entradas = malloc(sizeof(int) * CANTIDAD_NIVELES);
+            entradas = malloc(sizeof(int) * CANTIDAD_NIVELES);
             for (int i = 0; i < CANTIDAD_NIVELES; i++)
             {
-                entradas[i] = *((int *) list_get(partes, i + 2));
+                entradas[i] = *((int *)list_get(partes, i + 2));
             }
             acceder_a_marco(*PID, entradas, &socket);
             free(entradas);
             break;
         case LEER_PAG:
-            int *direccion_fisica = list_get(partes, 2);
-            int *tam_leer = list_get(partes, 3);
-            leer_pag_por_tam(*PID, *direccion_fisica, *tam_leer, &socket);
+            direccion_fisica = (int *)list_get(partes, 2);
+            tam_leer_escribir = (int *)list_get(partes, 3);
+            leer_pag_por_tam(*PID, *direccion_fisica, *tam_leer_escribir, &socket);
             break;
         case ACTUALIZAR_PAG:
-            int *dir_fisica = list_get(partes, 2);
-            int *tam_escribir = list_get(partes, 3);
-            char *mensaje_a_escribir = list_get(partes, 4);
-            actualizar_pag_completa(*PID, *dir_fisica, *tam_escribir, mensaje_a_escribir, &socket);
+            direccion_fisica = (int *)list_get(partes, 2);
+            tam_leer_escribir = (int *)list_get(partes, 3);
+            mensaje_a_escribir = string_duplicate((char *)list_get(partes, 4));
+            actualizar_pag_completa(*PID, *direccion_fisica, *tam_leer_escribir, mensaje_a_escribir, &socket);
             free(mensaje_a_escribir);
             break;
-        case MEMORY_DUMP:
-            dump_memory(*PID);
+        case ACTUALIZAR_PAG_COM:
+            direccion_fisica = list_get(partes, 2);
+            mensaje_a_escribir = list_get(partes, 3);
+            actualizar_pag_completa(*PID, *direccion_fisica, TAM_PAGINA, mensaje_a_escribir, &socket);
+            free(mensaje_a_escribir);
             break;
         case TAREA:
-            int *num_tarea = list_get(partes, 2);
+            num_tarea = list_get(partes, 2);
             enviar_instruccion(*PID, *num_tarea, &socket);
             break;
         case CORTAR:
             return NULL;
         default:
-            // Enviar que no existe
+            char* mensaje="NO";
+            enviar_mensaje(mensaje,socket);
             break;
         }
         list_destroy_and_destroy_elements(partes, free);
-    //}
+    }
     return NULL;
 }
 
 void *gestion_conexiones()
 {
     // Crea socket y espera
-    //int socket_escucha = iniciar_modulo(PUERTO_ESCUCHA, log_memo);
-    int socket_escucha = iniciar_modulo(PUERTO_ESCUCHA,log_memo);
-    //socket_conectado = malloc(sizeof(int));
+    int socket_escucha = iniciar_modulo(PUERTO_ESCUCHA);
+    // socket_conectado = malloc(sizeof(int));
     while (1)
     {
         // Recibe un cliente y crea un hilo personalizado para la conexión
         socket_conectado = malloc(sizeof(int));
-        log_trace(log_memo,"esperar");
-        *socket_conectado = establecer_conexion(socket_escucha, log_memo);
-        
-        pthread_t manejo_servidor;
-        log_trace(log_memo,"antes de ingresar");
+        *socket_conectado = establecer_conexion(socket_escucha);
+
+        // Independiza la conexion
         int *particular = malloc(sizeof(int));
         *particular = *socket_conectado;
-        pthread_create(&manejo_servidor, NULL, ingresar_conexion,(void*) particular);
-        pthread_join(manejo_servidor,NULL);
-        //pthread_detach(manejo_servidor);
-        log_trace(log_memo,"despues de  ingresar");
+
+        // Manejamos la conexion de manera independiente
+        pthread_t manejo_servidor;
+        pthread_create(&manejo_servidor, NULL, ingresar_conexion, (void *)particular);
+        // pthread_join(manejo_servidor,NULL);
+        pthread_detach(manejo_servidor);
     }
     close(socket_escucha);
     return NULL;
 }
-*/
+
 int main(int argc, char *argv[])
 {
-    if (argc < 2){
-        abort();
-    }
-    iniciar_config(argv[1]);
-    
+    // if (argc < 2){
+    //     abort();
+    // }
+    // iniciar_config(argv[1]);
+    iniciar_config("/home/utnso/Desktop/memoria.conf");
+
     sem_init(&creacion, 1, 1);
     sem_init(&memo_usuario, 1, 1);
     sem_init(&asignar_pag, 1, 1);
@@ -820,64 +843,66 @@ int main(int argc, char *argv[])
     //      enviar_instruccion(numero_de_proceso , numero_instruccion);
     //      eliminar_proceso(numero_proceso);
 
-    
-    int *chivo=malloc(sizeof(int));
-    int *posicion = malloc((CANTIDAD_NIVELES) * sizeof(int));
+    // pruebas
+    /*
+        int *chivo=malloc(sizeof(int));
+        int *posicion = malloc((CANTIDAD_NIVELES) * sizeof(int));
 
-    posicion[0]=0;
-    posicion[1]=0;
-    posicion[2]=0;
+        posicion[0]=0;
+        posicion[1]=0;
+        posicion[2]=0;
 
-    peticion_creacion(64, "pseudocodigo.txt", 1,chivo);
-    peticion_creacion(65, "pseu.txt", 2,chivo);
-    peticion_creacion(64, "pseudocodigo.txt", 3,chivo);
-    actualizar_pag_completa(2 , 1 , 62 , "hola__________________________________________________________",chivo);
-    actualizar_pag_completa(1 , 0 , 64 , "_____________________________juan_______________________________",chivo);
-    actualizar_pag_completa(2 , 2 , 64 , "hola_2__________________________________________________________",chivo);
-    actualizar_pag_completa(3 , 3 , 64 , "hola_roquefeleeererererererererererererererererererererererererr",chivo);
+        peticion_creacion(64, "pseudocodigo.txt", 1,chivo);
+        peticion_creacion(65, "pseu.txt", 2,chivo);
+        peticion_creacion(64, "pseudocodigo.txt", 3,chivo);
+        actualizar_pag_completa(2 , 1 , 62 , "hola__________________________________________________________",chivo);
+        actualizar_pag_completa(1 , 0 , 64 , "_____________________________juan_______________________________",chivo);
+        actualizar_pag_completa(2 , 2 , 64 , "hola_2__________________________________________________________",chivo);
+        actualizar_pag_completa(3 , 3 , 64 , "hola_roquefeleeererererererererererererererererererererererererr",chivo);
 
-    acceder_a_marco(3, posicion,chivo);
-    enviar_instruccion(1,2,chivo);
+        acceder_a_marco(3, posicion,chivo);
+        enviar_instruccion(1,2,chivo);
 
-    suspender(1);
-    suspender(2);
-    suspender(3);
+        suspender(1);
+        suspender(2);
+        suspender(3);
 
-    desuspender(3,chivo);
-    desuspender(1,chivo);
-    desuspender(2,chivo);
+        desuspender(3,chivo);
+        desuspender(1,chivo);
+        desuspender(2,chivo);
 
-    dump_memory(1);
-    dump_memory(2);
-    dump_memory(3);
+        dump_memory(1);
+        dump_memory(2);
+        dump_memory(3);
 
-    suspender(1);
-    suspender(2);
+        suspender(1);
+        suspender(2);
 
-    desuspender(2,chivo);
-    desuspender(1,chivo);
+        desuspender(2,chivo);
+        desuspender(1,chivo);
 
-    acceder_a_marco(3 , posicion,chivo);
-    acceder_a_marco(1 , posicion,chivo);
-    acceder_a_marco(2 , posicion,chivo);
+        acceder_a_marco(3 , posicion,chivo);
+        acceder_a_marco(1 , posicion,chivo);
+        acceder_a_marco(2 , posicion,chivo);
 
-    leer_pag_por_tam(1,3,20,chivo);
-    leer_pag_entera(1,3);
-    enviar_instruccion(1,2,chivo);
+        leer_pag_por_tam(1,3,20,chivo);
+        leer_pag_entera(1,3);
+        enviar_instruccion(1,2,chivo);
 
-    eliminar_proceso(1);
-    eliminar_proceso(2);
-    eliminar_proceso(3);
+        eliminar_proceso(1);
+        eliminar_proceso(2);
+        eliminar_proceso(3);
 
-    free(posicion);
-    free(chivo);
+        free(posicion);
+        free(chivo);
+    */
 
     // Creamos el hilo que crea el servidor
-    //pthread_t servidor;
-    //pthread_create(&servidor, NULL, gestion_conexiones, NULL);
+    pthread_t servidor;
+    pthread_create(&servidor, NULL, gestion_conexiones, NULL);
 
     // Esperamos a que el hilo termine, aunque nunca lo haga
-    //pthread_join(servidor, NULL);
+    pthread_join(servidor, NULL);
 
     // pthread_detach(servidor);
 
@@ -898,6 +923,6 @@ int main(int argc, char *argv[])
     log_destroy(log_memo);
     free(bitmap);
     free(MEMORIA_USUARIO);
-    
+
     return 0;
 }
