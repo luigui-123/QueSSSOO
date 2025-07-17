@@ -407,7 +407,7 @@ int traducir_direccion (int direccion_logica,cpuinfo *proceso, TLBEntrada* tlb)
     else // TLB miss
     {
         t_paquete *paquete = crear_paquete();
-        agregar_a_paquete(paquete, 5, sizeof(int));
+        agregar_a_paquete(paquete, 5, sizeof(int)); //5 -> Envio marco
         agregar_a_paquete(paquete, proceso->pid, sizeof(int));
         int n;
         for(int i=1; i<=niveles_tabla; i++){
@@ -418,8 +418,8 @@ int traducir_direccion (int direccion_logica,cpuinfo *proceso, TLBEntrada* tlb)
         eliminar_paquete(paquete);
         int marco;
         t_list *lista = recibir_paquete(conexion_memoria);
-        marco = list_get(lista, 0);
-        list_destroy(lista);
+        marco = *(int *)list_get(lista, 0);
+        list_destroy_and_destroy_elements(lista, free);
         
         return (marco * tam_pagina + desplazamiento);
     } 
@@ -478,9 +478,10 @@ int main(int argc, char* argv[])
     enviar_mensaje(argv[2], conexion_memoria);
 
     t_list *paquete_memoria = recibir_paquete(conexion_memoria);
-    tam_pagina = list_get(paquete_memoria, 0);
-    niveles_tabla = list_get(paquete_memoria, 1);
-    entradas_por_tabla = list_get(paquete_memoria, 2);
+    tam_pagina = *(int *)list_get(paquete_memoria, 0);
+    niveles_tabla = *(int *)list_get(paquete_memoria, 1);
+    entradas_por_tabla = *(int *)list_get(paquete_memoria, 2);
+    list_destroy_and_destroy_elements(paquete_memoria, free);
 
     TLBEntrada *tlb;
 
@@ -516,8 +517,9 @@ int main(int argc, char* argv[])
         cpuinfo *procesocpu;
         procesocpu = malloc(sizeof(cpuinfo));
         procesocpu->tipo = 0; //Para que memoria sepa que le voy a pedir una instruccion
-        procesocpu->pid = list_get(proceso, 0);
-        procesocpu->pc = list_get(proceso, 1);
+        procesocpu->pid = *(int *)list_get(proceso, 0);
+        procesocpu->pc = *(int *)list_get(proceso, 1);
+        list_clean_and_destroy_elements(proceso, free);
         do{
             instruccion = obtener_instruccion(procesocpu);
             decodear_y_ejecutar_instruccion(instruccion, procesocpu, &interrupcion, cache, tlb);
@@ -526,6 +528,8 @@ int main(int argc, char* argv[])
             sem_post(&mutex_interrupcion);
         }while(!interrupcion);
         t_paquete *paquete = crear_paquete();
+        int tipo = 4;
+        agregar_a_paquete(paquete, tipo, sizeof(int));
         agregar_a_paquete(paquete, procesocpu, sizeof(cpuinfo));
         enviar_paquete(paquete, conexion_kernel_dispatch);
         eliminar_paquete(paquete);
@@ -537,6 +541,8 @@ int main(int argc, char* argv[])
         }
         free(procesocpu);
     }
+
+    list_destroy(proceso);
 
     // Limpieza general
     close(conexion_kernel_dispatch);
@@ -762,6 +768,7 @@ void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, bool *
         agregar_a_paquete(paquete, tamanio, sizeof(int));
         enviar_paquete(paquete, conexion_kernel_dispatch);
         eliminar_paquete(paquete);
+        recibir_mensaje(conexion_kernel_dispatch);
         free(init);
         proceso->pc = proceso->pc + 1;
 
