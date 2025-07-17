@@ -209,7 +209,9 @@ void inicializar_cache(Pagina *cache) {
         cache[i].numero_pagina = -1; 
         cache[i].modificado = 0;
         cache[i].referencia_bit = 0;
-        memset(cache[i].contenido, 0, tam_pagina);
+        for(int j=0; j<tam_pagina; j++){
+            cache[i].contenido[j]="0";
+        }
     }
     puntero = 0;
     frames_cargados = 0;
@@ -233,14 +235,6 @@ int buscar_cache(Pagina *cache, int numero_pagina) {
         }
     }
     return -1;
-}
-
-int minimo(int a, int b) {
-  if (a < b) {
-    return a;
-  } else {
-    return b;
-  }
 }
 
 char* leer_cache (Pagina *cache,int numero_pagina, int desplazamiento, int longitud)
@@ -484,18 +478,6 @@ int main(int argc, char* argv[])
 
     iniciar_config(path_config); 
     
-    TLBEntrada *tlb;
-
-    if(entradas_tlb > 0){
-        tlb = malloc(sizeof(TLBEntrada)*entradas_tlb);
-    }
-
-    Pagina *cache;
-
-    if(entradas_cache > 0){
-        cache = malloc(sizeof(Pagina)*entradas_cache);
-    }
-    
     //enviar cpu_id al kernel
     enviar_mensaje(argv[0],conexion_kernel_dispatch);
 
@@ -508,6 +490,21 @@ int main(int argc, char* argv[])
     t_list *paquete_memoria = recibir_paquete(conexion_memoria);
     tam_pagina = list_get(paquete_memoria, 0);
     entradas_por_tabla = list_get(paquete_memoria, 1);
+
+    TLBEntrada *tlb;
+
+    if(entradas_tlb > 0){
+        tlb = malloc(sizeof(TLBEntrada)*entradas_tlb);
+    }
+
+    Pagina *cache;
+
+    if(entradas_cache > 0){
+        cache = malloc(sizeof(Pagina)*entradas_cache);
+        for(int i = 0; i<entradas_cache; i++){
+            cache[i].contenido = malloc(sizeof(char)*tam_pagina);
+        }
+    }
     
     t_list *proceso;
     char *instruccion;
@@ -557,6 +554,9 @@ int main(int argc, char* argv[])
     log_destroy(log_cpu);
     config_destroy(config);
     if(entradas_cache > 0)
+        for(int i = 0; i<entradas_cache; i++){
+            free(cache[i].contenido);
+        }
         free(cache);
     if(entradas_tlb > 0)
         free(tlb);
