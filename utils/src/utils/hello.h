@@ -56,7 +56,7 @@ void reenviar_mensaje(int socket_cliente,int socket_servidor);
 
 t_list* recibir_paquete(int socket_cliente);
 
-void enviar_paquete(t_paquete* paquete, int socket_cliente);
+bool enviar_paquete(t_paquete* paquete, int socket_cliente);
 
 void agregar_a_paquete(t_paquete* paquete, void* valor, int tamanio);
 
