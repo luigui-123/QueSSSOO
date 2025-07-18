@@ -10,6 +10,9 @@
 #include <pthread.h>
 #include <semaphore.h>
 #include <math.h>
+#include <string.h>
+
+
 
 //variables globales
 int tam_pagina; //pide a memoria
@@ -59,18 +62,7 @@ typedef struct {
 t_list *recibir_procesos();
 char *obtener_instruccion(cpuinfo*);
 
-void iniciar_config(char* path_config)
-{
-	config = config_create(path_config);
-    conectar_kernel_dispatch();
-    conectar_kernel_interrupt();
-    conectar_memoria();
-    entradas_cache = config_get_int_value(config, "ENTRADAS_CACHE");
-    retardo_cache = config_get_int_value(config, "RETARDO_CACHE");
-    entradas_tlb = config_get_int_value (config,"ENTRADAS_TLB");
-    reemplazo_cache = config_get_string_value(config, "REEMPLAZO_CACHE");
-    reemplazo_tlb = config_get_string_value(config, "REEMPLAZO_TLB");
-}
+
 void conectar_kernel_interrupt()
 {
     char* ip_kernel_interrupt = config_get_string_value(config, "IP_KERNEL");
@@ -91,10 +83,22 @@ void conectar_memoria()
 {
     char* ip_memoria = config_get_string_value(config, "IP_MEMORIA");
     char* puerto_memoria = config_get_string_value(config, "PUERTO_MEMORIA");
-    int conexion_memoria = iniciar_conexion(ip_memoria, puerto_memoria);
+    conexion_memoria = iniciar_conexion(ip_memoria, puerto_memoria);
     return;
 }
 
+void iniciar_config(char* path_config)
+{
+	config = config_create(path_config);
+    conectar_kernel_dispatch();
+    conectar_kernel_interrupt();
+    conectar_memoria();
+    entradas_cache = config_get_int_value(config, "ENTRADAS_CACHE");
+    retardo_cache = config_get_int_value(config, "RETARDO_CACHE");
+    entradas_tlb = config_get_int_value (config,"ENTRADAS_TLB");
+    reemplazo_cache = config_get_string_value(config, "REEMPLAZO_CACHE");
+    reemplazo_tlb = config_get_string_value(config, "REEMPLAZO_TLB");
+}
 //---------------------------------------TLB----------------------------------------
 
 // Estructura para una entrada de la TLB
@@ -163,11 +167,11 @@ int buscar_entrada_fifo(TLBEntrada *tlb){
 
 void actualizar_tlb(TLBEntrada *tlb, int pagina, int marco) {
     int indice = -1;
-    if(reemplazo_tlb == "LRU"){    
+    if(!strcmp(reemplazo_tlb, "LRU")){    
         // Encuentra el índice a reemplazar según LRU
         indice = buscar_entrada_lru(tlb);
     }
-    else if(reemplazo_tlb == "FIFO"){
+    else if(!strcmp(reemplazo_tlb, "FIFO")){
         indice = buscar_entrada_fifo(tlb);
     }
     // Reemplazar la entrada
@@ -180,6 +184,46 @@ void actualizar_tlb(TLBEntrada *tlb, int pagina, int marco) {
     printf("TLB actualizado: Página %d -> Marco %d (Reemplazando entrada %d)\n", 
         pagina, marco, indice);
     return;
+}
+
+int traducir_direccion (int direccion_logica,cpuinfo *proceso, TLBEntrada* tlb)
+{
+    int numero_pagina = direccion_logica / tam_pagina;  
+    int desplazamiento = direccion_logica % tam_pagina;
+     
+    int marco;
+    if((marco = buscar_tlb(tlb,numero_pagina, proceso->pid))+1 ) //TLB hit (sumo 1 porque si no lo encuentra, marco=-1)
+    {
+        return (marco * tam_pagina + desplazamiento);
+    }
+    else // TLB miss
+    {
+        t_paquete *paquete = crear_paquete();
+
+        int *puntero_pid = malloc(sizeof(int));
+        *puntero_pid = proceso->pid;
+
+        int codigo = 5;
+
+        agregar_a_paquete(paquete, &codigo, sizeof(int)); //5 -> Envio marco
+        agregar_a_paquete(paquete, (void *)puntero_pid, sizeof(int));
+
+        int n;
+        for(int i=1; i<=niveles_tabla; i++){
+            n = (numero_pagina / (int) pow(entradas_por_tabla, niveles_tabla - i)) % entradas_por_tabla;
+            agregar_a_paquete(paquete, &n, sizeof(int));
+        }
+        enviar_paquete(paquete, conexion_memoria);
+        eliminar_paquete(paquete);
+        int marco;
+        t_list *lista = recibir_paquete(conexion_memoria);
+        marco = *(int *)list_get(lista, 0);
+        list_destroy_and_destroy_elements(lista, free);
+        
+        return (marco * tam_pagina + desplazamiento);
+    } 
+    
+
 }
 
 
@@ -203,7 +247,7 @@ void inicializar_cache(Pagina *cache) {
         cache[i].modificado = 0;
         cache[i].referencia_bit = 0;
         for(int j=0; j<tam_pagina; j++){
-            cache[i].contenido[j]="0";
+            cache[i].contenido[j]= '0';
         }
     }
     puntero = 0;
@@ -265,7 +309,7 @@ void actualizar_cache (Pagina *cache, Pagina*pagina,cpuinfo*proceso, TLBEntrada 
     int direccion_logica;
     bool reemplazado = false;
     int indice;
-    if(reemplazo_cache == "CLOCK"){
+    if(!strcmp(reemplazo_cache, "CLOCK")){
         if((indice = buscar_cache(cache, pagina->numero_pagina))+1){
             cache[indice].referencia_bit = 1;
             reemplazado = true;
@@ -301,7 +345,7 @@ void actualizar_cache (Pagina *cache, Pagina*pagina,cpuinfo*proceso, TLBEntrada 
                 puntero = (puntero + 1) % entradas_cache;
             }
         } 
-    } else if(reemplazo_cache == "CLOCK-M"){
+    } else if(!strcmp(reemplazo_cache, "CLOCK-M")){
         if((indice = buscar_cache(cache, pagina->numero_pagina))+1){
             cache[indice].referencia_bit = 1;
             reemplazado = true;
@@ -315,7 +359,7 @@ void actualizar_cache (Pagina *cache, Pagina*pagina,cpuinfo*proceso, TLBEntrada 
                     cache[puntero].modificado = 0;
                     strncpy(cache[puntero].contenido, pagina->contenido, tam_pagina);
                     cache[puntero].referencia_bit = 1; // Setea el bit referencia en 1
-                    cache = (puntero + 1) % entradas_cache; // Mueve el puntero clock
+                    puntero = (puntero + 1) % entradas_cache; // Mueve el puntero clock
                     reemplazado = true;
                     if(frames_cargados < entradas_tlb)
                         frames_cargados++;
@@ -398,52 +442,22 @@ void enviar_cambios_memoria (Pagina *cache,cpuinfo *proceso,TLBEntrada *tlb)
 }    
 
 
-int traducir_direccion (int direccion_logica,cpuinfo *proceso, TLBEntrada* tlb)
-{
-    int numero_pagina = direccion_logica / tam_pagina;  
-    int desplazamiento = direccion_logica % tam_pagina;
-     
-    int marco;
-    if((marco = buscar_tlb(tlb,numero_pagina, proceso->pid))+1 ) //TLB hit (sumo 1 porque si no lo encuentra, marco=-1)
-    {
-        return (marco * tam_pagina + desplazamiento);
-    }
-    else // TLB miss
-    {
-        t_paquete *paquete = crear_paquete();
-        agregar_a_paquete(paquete, 5, sizeof(int)); //5 -> Envio marco
-        agregar_a_paquete(paquete, proceso->pid, sizeof(int));
-        int n;
-        for(int i=1; i<=niveles_tabla; i++){
-            n = (numero_pagina / (int) pow(entradas_por_tabla, niveles_tabla - i)) % entradas_por_tabla;
-            agregar_a_paquete(paquete, n, sizeof(int));
-        }
-        enviar_paquete(paquete, conexion_memoria);
-        eliminar_paquete(paquete);
-        int marco;
-        t_list *lista = recibir_paquete(conexion_memoria);
-        marco = *(int *)list_get(lista, 0);
-        list_destroy_and_destroy_elements(lista, free);
-        
-        return (marco * tam_pagina + desplazamiento);
-    } 
-    
 
-}
 
 sem_t mutex_interrupcion;
 bool interrupcion_conexion = false;
 
-void escuchar_conexion_interrupt(){
+void* escuchar_conexion_interrupt(void* i){
     while(1){
         char* mensaje = recibir_mensaje(conexion_kernel_interrupt);
         log_info(log_cpu, "Llega interrupcion al puerto Interrupt");
-        if(mensaje == "DESALOJAR")
+        if(!strcmp(mensaje, "DESALOJAR")){
             sem_wait(&mutex_interrupcion);
             interrupcion_conexion = true;
             sem_post(&mutex_interrupcion);
         }
-    return;
+    return NULL;
+    }
 }
 
 bool check_interrupt(bool interrupcion){
@@ -455,6 +469,247 @@ bool check_interrupt(bool interrupcion){
 }
 
 
+t_list *recibir_procesos()
+{
+    t_list *proceso;
+    proceso = recibir_paquete(conexion_kernel_dispatch);
+
+    return proceso;
+}
+
+char *obtener_instruccion(cpuinfo *procesocpu)
+{
+    log_info(log_cpu, "PID: %d - FETCH - Program Counter: %d", procesocpu->pid, procesocpu->pc);
+    char * instruccion;
+    t_paquete *paquete = crear_paquete();
+    agregar_a_paquete(paquete, procesocpu, sizeof(cpuinfo));
+    enviar_paquete(paquete, conexion_memoria);
+    eliminar_paquete(paquete);
+    instruccion = recibir_mensaje(conexion_memoria);
+
+    return instruccion;
+}
+
+
+void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, bool *interrupcion,Pagina *cache,TLBEntrada*tlb)
+{
+    
+    char **instruccion_separada = string_n_split(instruccion, 3, " ");
+    string_to_upper(instruccion_separada[0]);
+    char *parametros = malloc(sizeof(char)*64);
+    strcpy(parametros, instruccion_separada[1]);
+    strcat(parametros, " ");
+    strcat(parametros, instruccion_separada[2]);
+    log_info(log_cpu, "PID: %d - Ejecutando: %s - %s ", proceso->pid, instruccion_separada[0], parametros);
+    free(parametros);
+    if (!strcmp(instruccion_separada[0], "WRITE")){
+
+        int direccion_logica = atoi(instruccion_separada[1]);
+        int numero_pagina = direccion_logica/tam_pagina;
+        int desplazamiento = direccion_logica%tam_pagina;
+        int longitud = string_length(instruccion_separada[2]);
+
+        //Primero vemos si esa pagina esta en cache
+
+        if(frames_cargados > 0 && esta_en_cache(cache,numero_pagina,proceso))
+        {
+           
+            escribir_cache(cache,numero_pagina,instruccion_separada[2], desplazamiento, longitud);
+            proceso->pc = proceso->pc + 1;
+        } else{
+
+            //traducir y escribir
+            int dir_fisica = traducir_direccion(direccion_logica, proceso, tlb);
+            memoriainfo *write;
+            write = malloc(sizeof(memoriainfo));
+            write->tipo = 2;
+            write->pid = proceso->pid;
+            write->direccion = dir_fisica;
+            char *dato = instruccion_separada[2];            
+            int longitud = string_length(dato);
+            longitud++;
+            t_paquete *paquete = crear_paquete();
+            agregar_a_paquete(paquete, write, sizeof(memoriainfo));
+            agregar_a_paquete(paquete, &longitud, sizeof(int));
+            agregar_a_paquete(paquete, dato, longitud*sizeof(char));
+            enviar_paquete(paquete, conexion_memoria);
+            free(write);
+            eliminar_paquete(paquete);
+            recibir_mensaje(conexion_memoria); //Recibo el OK de memoria
+            log_info(log_cpu, "PID: %d - Acción: ESCRIBIR - Dirección Física: %d - Valor: %s",proceso->pid,dir_fisica,dato);
+            proceso->pc = proceso->pc + 1;
+
+            //actualizar cache
+            if(entradas_cache > 0){
+                Pagina *pagina_cache = malloc(sizeof(Pagina));
+                pagina_cache->modificado=0;
+                pagina_cache->referencia_bit=1;
+                memoriainfo *pagina = malloc(sizeof(memoriainfo));
+                pagina->tipo = 3;
+                pagina->pid = proceso->pid;
+                pagina->direccion = dir_fisica-desplazamiento; //envia el marco que busca
+                t_paquete *paquete_pagina = crear_paquete();
+                agregar_a_paquete(paquete_pagina, pagina, sizeof(memoriainfo));
+                enviar_paquete(paquete_pagina, conexion_memoria);
+                char *contenido = recibir_mensaje(conexion_memoria);
+                pagina_cache->numero_pagina=numero_pagina;
+                pagina_cache->contenido = contenido;
+                actualizar_cache(cache, pagina_cache,proceso, tlb);
+                eliminar_paquete(paquete_pagina);
+                free(pagina_cache);
+                free(pagina);
+            }
+
+
+            //actualizar TLB
+            if(entradas_tlb > 0){
+                int marco= (dir_fisica-desplazamiento)/tam_pagina;
+                actualizar_tlb (tlb,numero_pagina,marco);            
+            }
+
+        }
+        
+
+    } else if (!strcmp(instruccion_separada[0], "READ")){
+        
+        int direccion_logica = atoi(instruccion_separada[1]);
+        int numero_pagina = direccion_logica/tam_pagina;
+        int desplazamiento =direccion_logica%tam_pagina;
+        int longitud = atoi(instruccion_separada[2]);
+        
+        if(frames_cargados > 0 && esta_en_cache(cache,numero_pagina,proceso))
+        {
+
+            char *leido = leer_cache (cache, numero_pagina, desplazamiento, longitud);
+            log_info(log_cpu, "%s", leido);
+            free(leido);
+            proceso->pc = proceso->pc + 1;
+
+        }else{
+            
+            //traducir y leer
+            int dir_fisica = traducir_direccion(direccion_logica ,proceso, tlb);
+            memoriainfo *read;
+            read = malloc(sizeof(memoriainfo));
+            read->tipo = 1;
+            read->pid = proceso->pid;
+            read->direccion = dir_fisica;
+            int tamanio = atoi(instruccion_separada[2]);
+            t_paquete *paquete = crear_paquete();
+            agregar_a_paquete(paquete, read, sizeof(memoriainfo));
+            agregar_a_paquete(paquete, &tamanio, sizeof(int));
+            enviar_paquete(paquete, conexion_memoria);
+            free(read);
+            eliminar_paquete(paquete);
+            char *leido = recibir_mensaje(conexion_memoria);
+            log_info(log_cpu, "PID: %d - Acción: LEER - Dirección Física: %d - Valor: %s",proceso->pid,dir_fisica,leido);
+            proceso->pc = proceso->pc + 1;
+            
+            //actualizar cache
+            if(entradas_cache > 0){
+                Pagina *pagina_cache = malloc(sizeof(Pagina));
+                pagina_cache->modificado=0;
+                pagina_cache->referencia_bit=1;
+                memoriainfo *pagina = malloc(sizeof(memoriainfo));
+                pagina->tipo = 3;
+                pagina->pid = proceso->pid;
+                pagina->direccion = dir_fisica-desplazamiento;
+                t_paquete *paquete_pagina = crear_paquete();
+                agregar_a_paquete(paquete_pagina, pagina, sizeof(memoriainfo));
+                enviar_paquete(paquete_pagina, conexion_memoria);
+                char *contenido = recibir_mensaje(conexion_memoria);
+                pagina_cache->numero_pagina=numero_pagina;
+                pagina_cache->contenido = contenido;
+                actualizar_cache(cache, pagina_cache,proceso, tlb);
+                eliminar_paquete(paquete_pagina);
+                free (pagina_cache);
+                free(pagina);
+            }
+
+
+            //actualizar TLB
+            if(entradas_tlb > 0){
+                int marco= (dir_fisica-desplazamiento)/tam_pagina;
+                actualizar_tlb (tlb,numero_pagina,marco);
+            }
+
+        }
+        
+
+    } else if (!strcmp(instruccion_separada[0], "GOTO")){
+        proceso->pc = atoi(instruccion_separada[1]);
+
+    } else if (!strcmp(instruccion_separada[0], "IO")){
+        cpuinfo *io;
+        io = malloc(sizeof(cpuinfo));
+        io->tipo = 3;
+        io->pid = proceso->pid;
+        io->pc = proceso->pc + 1;
+        char *dispositivo = instruccion_separada[1];
+        int longitud = string_length(dispositivo);
+        int time = atoi(instruccion_separada[2]);
+        t_paquete *paquete = crear_paquete();
+        agregar_a_paquete(paquete, io, sizeof(cpuinfo));
+        agregar_a_paquete(paquete, dispositivo, (longitud+1)*sizeof(char));
+        agregar_a_paquete(paquete, &time, sizeof(int));
+        enviar_paquete(paquete, conexion_kernel_dispatch);
+        eliminar_paquete(paquete);
+        free(io);
+        proceso->pc = proceso->pc + 1;
+        *interrupcion = true;
+
+    } else if (!strcmp(instruccion_separada[0], "INIT_PROC")){
+        cpuinfo *init;
+        init = malloc(sizeof(cpuinfo));
+        init->tipo = 1;
+        init->pid = proceso->pid;
+        init->pc = proceso->pc + 1;
+        char *archivo = instruccion_separada[1];
+        int longitud = string_length(archivo);
+        int tamanio = atoi(instruccion_separada[2]);
+        t_paquete *paquete = crear_paquete();
+        agregar_a_paquete(paquete, init, sizeof(cpuinfo));
+        agregar_a_paquete(paquete, archivo, (longitud+1)*sizeof(char));
+        agregar_a_paquete(paquete, &tamanio, sizeof(int));
+        enviar_paquete(paquete, conexion_kernel_dispatch);
+        eliminar_paquete(paquete);
+        recibir_mensaje(conexion_kernel_dispatch);
+        free(init);
+        proceso->pc = proceso->pc + 1;
+
+    } else if (!strcmp(instruccion_separada[0], "DUMP_MEMORY")){
+        cpuinfo *dump;
+        dump = malloc(sizeof(cpuinfo));
+        dump->tipo = 2;
+        dump->pid = proceso->pid;
+        dump->pc = proceso->pc + 1;
+        t_paquete *paquete = crear_paquete();
+        agregar_a_paquete(paquete, dump, sizeof(cpuinfo));
+        enviar_paquete(paquete, conexion_kernel_dispatch);
+        eliminar_paquete(paquete);
+        free(dump);
+        proceso->pc = proceso->pc + 1;
+        *interrupcion = true;
+
+    } else if (!strcmp(instruccion_separada[0], "EXIT")){
+        cpuinfo *exit;
+        exit = malloc(sizeof(cpuinfo));
+        exit->tipo = 0;
+        exit->pid = proceso->pid;
+        exit->pc = proceso->pc;
+        t_paquete *paquete = crear_paquete();
+        agregar_a_paquete(paquete, exit, sizeof(cpuinfo));
+        enviar_paquete(paquete, conexion_kernel_dispatch);
+        eliminar_paquete(paquete);
+        free(exit);
+    }
+
+    
+
+    return;
+}
+
+
 int main(int argc, char* argv[]) 
 {
     if(argc < 3){
@@ -463,20 +718,20 @@ int main(int argc, char* argv[])
 
     char *nombre_log_cpu = malloc(sizeof(char)*9);
     strcpy(nombre_log_cpu, "cpu");
-    strcat(nombre_log_cpu, argv[2]);
+    strcat(nombre_log_cpu, "1");
     strcat(nombre_log_cpu, ".log");
 
-    log_cpu = log_create(nombre_log_cpu, "cpu", false, LOG_LEVEL_INFO);
-
+    log_cpu = log_create(nombre_log_cpu, "cpu", true, LOG_LEVEL_INFO);
+    
     char *path_config = argv[1];
 
     iniciar_config(path_config); 
     
     //enviar cpu_id al kernel
-    enviar_mensaje(argv[2],conexion_kernel_dispatch);
+    char* id = argv[2];
+    enviar_mensaje(id,conexion_kernel_dispatch);
 
     recibir_mensaje(conexion_kernel_dispatch);
-    
     
     //enviar cpu_id a memoria;
     //enviar_mensaje(argv[2], conexion_memoria);
@@ -526,7 +781,7 @@ int main(int argc, char* argv[])
         list_clean_and_destroy_elements(proceso, free);
         do{
             instruccion = obtener_instruccion(procesocpu);
-            if(instruccion != "NO"){
+            if (strcmp(instruccion, "NO")){
                 decodear_y_ejecutar_instruccion(instruccion, procesocpu, &interrupcion, cache, tlb);
                 sem_wait(&mutex_interrupcion);
                 interrupcion = check_interrupt(interrupcion);
@@ -538,7 +793,7 @@ int main(int argc, char* argv[])
         }while(!interrupcion);
         t_paquete *paquete = crear_paquete();
         int tipo = 4;
-        agregar_a_paquete(paquete, tipo, sizeof(int));
+        agregar_a_paquete(paquete, &tipo, sizeof(int));
         agregar_a_paquete(paquete, procesocpu, sizeof(cpuinfo));
         enviar_paquete(paquete, conexion_kernel_dispatch);
         eliminar_paquete(paquete);
@@ -559,252 +814,15 @@ int main(int argc, char* argv[])
     close(conexion_memoria);
     log_destroy(log_cpu);
     config_destroy(config);
-    if(entradas_cache > 0)
+    if(entradas_cache > 0){
         for(int i = 0; i<entradas_cache; i++){
             free(cache[i].contenido);
         }
         free(cache);
+    }
     if(entradas_tlb > 0)
         free(tlb);
-
+    
     return 0;
 }
 
-t_list *recibir_procesos()
-{
-    t_list *proceso;
-    proceso = recibir_paquete(conexion_kernel_dispatch);
-
-    return proceso;
-}
-
-char *obtener_instruccion(cpuinfo *procesocpu)
-{
-    log_info(log_cpu, "PID: %d - FETCH - Program Counter: %d", procesocpu->pid, procesocpu->pc);
-    char * instruccion;
-    t_paquete *paquete = crear_paquete();
-    agregar_a_paquete(paquete, procesocpu, sizeof(cpuinfo));
-    enviar_paquete(paquete, conexion_memoria);
-    eliminar_paquete(paquete);
-    instruccion = recibir_mensaje(conexion_memoria);
-
-    return instruccion;
-}
-
-
-void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, bool *interrupcion,Pagina *cache,TLBEntrada*tlb)
-{
-    
-    char **instruccion_separada = string_n_split(instruccion, 3, " ");
-    string_to_upper(instruccion_separada[0]);
-    char *parametros = malloc(sizeof(char)*64);
-    strcpy(parametros, instruccion_separada[1]);
-    strcat(parametros, " ");
-    strcat(parametros, instruccion_separada[2]);
-    log_info(log_cpu, "PID: %d - Ejecutando: %s - %s ", proceso->pid, instruccion_separada[0], parametros);
-    free(parametros);
-    if(instruccion_separada[0] == "WRITE"){
-
-        int direccion_logica = atoi(instruccion_separada[1]);
-        int numero_pagina = direccion_logica/tam_pagina;
-        int desplazamiento = direccion_logica%tam_pagina;
-        int longitud = string_length(instruccion_separada[2]);
-
-        //Primero vemos si esa pagina esta en cache
-
-        if(frames_cargados > 0 && esta_en_cache(cache,numero_pagina,proceso))
-        {
-           
-            escribir_cache(cache,numero_pagina,instruccion_separada[2], desplazamiento, longitud);
-            proceso->pc = proceso->pc + 1;
-        } else{
-
-            //traducir y escribir
-            int dir_fisica = traducir_direccion(direccion_logica, proceso, tlb);
-            memoriainfo *write;
-            write = malloc(sizeof(memoriainfo));
-            write->tipo = 2;
-            write->pid = proceso->pid;
-            write->direccion = dir_fisica;
-            char *dato = instruccion_separada[2];            
-            int longitud = string_length(dato);
-            t_paquete *paquete = crear_paquete();
-            agregar_a_paquete(paquete, write, sizeof(memoriainfo));
-            agregar_a_paquete(paquete, longitud+1, sizeof(int));
-            agregar_a_paquete(paquete, dato, (longitud+1)*sizeof(char));
-            enviar_paquete(paquete, conexion_memoria);
-            free(write);
-            eliminar_paquete(paquete);
-            recibir_mensaje(conexion_memoria); //Recibo el OK de memoria
-            log_info(log_cpu, "PID: %d - Acción: ESCRIBIR - Dirección Física: %d - Valor: %s",proceso->pid,dir_fisica,dato);
-            proceso->pc = proceso->pc + 1;
-
-            //actualizar cache
-            if(entradas_cache > 0){
-                Pagina *pagina_cache = malloc(sizeof(Pagina));
-                pagina_cache->modificado=0;
-                pagina_cache->referencia_bit=1;
-                memoriainfo *pagina = malloc(sizeof(memoriainfo));
-                pagina->tipo = 3;
-                pagina->pid = proceso->pid;
-                pagina->direccion = dir_fisica-desplazamiento; //envia el marco que busca
-                t_paquete *paquete_pagina = crear_paquete();
-                agregar_a_paquete(paquete_pagina, pagina, sizeof(memoriainfo));
-                enviar_paquete(paquete_pagina, conexion_memoria);
-                char *contenido = recibir_mensaje(conexion_memoria);
-                pagina_cache->numero_pagina=numero_pagina;
-                pagina_cache->contenido = contenido;
-                actualizar_cache(cache, pagina_cache,proceso, tlb);
-                eliminar_paquete(paquete_pagina);
-                free(pagina_cache);
-                free(pagina);
-            }
-
-
-            //actualizar TLB
-            if(entradas_tlb > 0){
-                int marco= (dir_fisica-desplazamiento)/tam_pagina;
-                actualizar_tlb (tlb,numero_pagina,marco);            
-            }
-
-        }
-        
-
-    } else if(instruccion_separada[0] == "READ"){
-        
-        int direccion_logica = atoi(instruccion_separada[1]);
-        int numero_pagina = direccion_logica/tam_pagina;
-        int desplazamiento =direccion_logica%tam_pagina;
-        int longitud = atoi(instruccion_separada[2]);
-        
-        if(frames_cargados > 0 && esta_en_cache(cache,numero_pagina,proceso))
-        {
-
-            char *leido = leer_cache (cache, numero_pagina, desplazamiento, longitud);
-            log_info(log_cpu, leido);
-            free(leido);
-            proceso->pc = proceso->pc + 1;
-
-        }else{
-            
-            //traducir y leer
-            int dir_fisica = traducir_direccion(direccion_logica ,proceso, tlb);
-            memoriainfo *read;
-            read = malloc(sizeof(memoriainfo));
-            read->tipo = 1;
-            read->pid = proceso->pid;
-            read->direccion = dir_fisica;
-            int tamanio = atoi(instruccion_separada[2]);
-            t_paquete *paquete = crear_paquete();
-            agregar_a_paquete(paquete, read, sizeof(memoriainfo));
-            agregar_a_paquete(paquete, tamanio, sizeof(int));
-            enviar_paquete(paquete, conexion_memoria);
-            free(read);
-            eliminar_paquete(paquete);
-            char *leido = recibir_mensaje(conexion_memoria);
-            log_info(log_cpu, "PID: %d - Acción: LEER - Dirección Física: %d - Valor: %s",proceso->pid,dir_fisica,leido);
-            proceso->pc = proceso->pc + 1;
-            
-            //actualizar cache
-            if(entradas_cache > 0){
-                Pagina *pagina_cache = malloc(sizeof(Pagina));
-                pagina_cache->modificado=0;
-                pagina_cache->referencia_bit=1;
-                memoriainfo *pagina = malloc(sizeof(memoriainfo));
-                pagina->tipo = 3;
-                pagina->pid = proceso->pid;
-                pagina->direccion = dir_fisica-desplazamiento;
-                t_paquete *paquete_pagina = crear_paquete();
-                agregar_a_paquete(paquete_pagina, pagina, sizeof(memoriainfo));
-                enviar_paquete(paquete_pagina, conexion_memoria);
-                char *contenido = recibir_mensaje(conexion_memoria);
-                pagina_cache->numero_pagina=numero_pagina;
-                pagina_cache->contenido = contenido;
-                actualizar_cache(cache, pagina_cache,proceso, tlb);
-                eliminar_paquete(paquete_pagina);
-                free (pagina_cache);
-                free(pagina);
-            }
-
-
-            //actualizar TLB
-            if(entradas_tlb > 0){
-                int marco= (dir_fisica-desplazamiento)/tam_pagina;
-                actualizar_tlb (tlb,numero_pagina,marco);
-            }
-
-        }
-        
-
-    } else if(instruccion_separada[0] == "GOTO"){
-        proceso->pc = atoi(instruccion_separada[1]);
-
-    } else if(instruccion_separada[0] == "IO"){
-        cpuinfo *io;
-        io = malloc(sizeof(cpuinfo));
-        io->tipo = 3;
-        io->pid = proceso->pid;
-        io->pc = proceso->pc + 1;
-        char *dispositivo = instruccion_separada[1];
-        int longitud = string_length(dispositivo);
-        int time = atoi(instruccion_separada[2]);
-        t_paquete *paquete = crear_paquete();
-        agregar_a_paquete(paquete, io, sizeof(cpuinfo));
-        agregar_a_paquete(paquete, dispositivo, (longitud+1)*sizeof(char));
-        agregar_a_paquete(paquete, time, sizeof(int));
-        enviar_paquete(paquete, conexion_kernel_dispatch);
-        eliminar_paquete(paquete);
-        free(io);
-        proceso->pc = proceso->pc + 1;
-        *interrupcion = true;
-
-    } else if(instruccion_separada[0] == "INIT_PROC"){
-        cpuinfo *init;
-        init = malloc(sizeof(cpuinfo));
-        init->tipo = 1;
-        init->pid = proceso->pid;
-        init->pc = proceso->pc + 1;
-        char *archivo = instruccion_separada[1];
-        int longitud = string_length(archivo);
-        int tamanio = atoi(instruccion_separada[2]);
-        t_paquete *paquete = crear_paquete();
-        agregar_a_paquete(paquete, init, sizeof(cpuinfo));
-        agregar_a_paquete(paquete, archivo, (longitud+1)*sizeof(char));
-        agregar_a_paquete(paquete, tamanio, sizeof(int));
-        enviar_paquete(paquete, conexion_kernel_dispatch);
-        eliminar_paquete(paquete);
-        recibir_mensaje(conexion_kernel_dispatch);
-        free(init);
-        proceso->pc = proceso->pc + 1;
-
-    } else if(instruccion_separada[0] == "DUMP_MEMORY"){
-        cpuinfo *dump;
-        dump = malloc(sizeof(cpuinfo));
-        dump->tipo = 2;
-        dump->pid = proceso->pid;
-        dump->pc = proceso->pc + 1;
-        t_paquete *paquete = crear_paquete();
-        agregar_a_paquete(paquete, dump, sizeof(cpuinfo));
-        enviar_paquete(paquete, conexion_kernel_dispatch);
-        eliminar_paquete(paquete);
-        free(dump);
-        proceso->pc = proceso->pc + 1;
-        *interrupcion = true;
-
-    } else if(instruccion_separada[0] == "EXIT"){
-        cpuinfo *exit;
-        exit = malloc(sizeof(cpuinfo));
-        exit->tipo = 0;
-        exit->pid = proceso->pid;
-        exit->pc = proceso->pc;
-        t_paquete *paquete = crear_paquete();
-        agregar_a_paquete(paquete, exit, sizeof(cpuinfo));
-        enviar_paquete(paquete, conexion_kernel_dispatch);
-        eliminar_paquete(paquete);
-        free(exit);
-    }
-
-    
-
-    return;
-}
