@@ -9,6 +9,7 @@
 #include <utils/hello.h>
 #include <pthread.h>
 #include <semaphore.h>
+#include <math.h>
 
 //variables globales
 int tam_pagina; //pide a memoria
@@ -414,7 +415,7 @@ int traducir_direccion (int direccion_logica,cpuinfo *proceso, TLBEntrada* tlb)
         agregar_a_paquete(paquete, proceso->pid, sizeof(int));
         int n;
         for(int i=1; i<=niveles_tabla; i++){
-            n = (numero_pagina / pow(entradas_por_tabla, niveles_tabla - i)) % entradas_por_tabla;
+            n = (numero_pagina / (int) pow(entradas_por_tabla, niveles_tabla - i)) % entradas_por_tabla;
             agregar_a_paquete(paquete, n, sizeof(int));
         }
         enviar_paquete(paquete, conexion_memoria);
