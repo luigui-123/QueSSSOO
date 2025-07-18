@@ -356,6 +356,9 @@ void enviar_instruccion(int pro, int instruccion, int *socket)
     else
     {
         cadena = "NO";
+        enviar_mensaje(cadena,*socket);
+        return;
+        
     }
     enviar_mensaje(cadena,*socket);
     free(cadena);
@@ -807,11 +810,11 @@ void *gestion_conexiones()
 
 int main(int argc, char *argv[])
 {
-    // if (argc < 2){
-    //     abort();
-    // }
-    // iniciar_config(argv[1]);
-    iniciar_config("/home/utnso/Desktop/memoria.conf");
+    if (argc < 2){
+        abort();
+    }
+    iniciar_config(argv[1]);
+    //iniciar_config("/home/utnso/Desktop/memoria.conf");
 
     sem_init(&creacion, 1, 1);
     sem_init(&memo_usuario, 1, 1);
