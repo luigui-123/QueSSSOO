@@ -32,6 +32,7 @@
 #define MEMORY_DUMP 7
 #define TAREA 8
 #define CORTAR 9
+#define LEER_PAG_COMPLETA 14
 
 // Globales Obligatorias
 t_config *nuevo_conf;
@@ -642,7 +643,7 @@ void leer_pag_por_tam(int pro, int marco, int tam, int *socket)
         memcpy(cadena, (char *)(MEMORIA_USUARIO + (marco * TAM_PAGINA)), tam);
         sem_post(&memo_usuario);
         strcat(cadena, "\0");
-        log_trace(log_memo, "Se pide enviar la cadena %s", cadena);
+        //log_trace(log_memo, "Se pide enviar la cadena %s", cadena);
         proceso->cantLecturas++;
         log_trace(log_memo, "## PID: %d - Lectura - Dir. Física: %d - Tamaño: %d", proceso->PID, ((marco * TAM_PAGINA)), tam);
         // log_trace(log_memo, "%s", cadena);
@@ -753,6 +754,10 @@ void *ingresar_conexion(void *socket_void)
             direccion_fisica = (int *)list_get(partes, 2);
             tam_leer_escribir = (int *)list_get(partes, 3);
             leer_pag_por_tam(*PID, *direccion_fisica, *tam_leer_escribir, &socket);
+            break;
+        case LEER_PAG_COMPLETA:
+            direccion_fisica = (int *)list_get(partes, 2);
+            leer_pag_por_tam(*PID, *direccion_fisica, TAM_PAGINA, &socket);
             break;
         case ACTUALIZAR_PAG:
             direccion_fisica = (int *)list_get(partes, 2);
