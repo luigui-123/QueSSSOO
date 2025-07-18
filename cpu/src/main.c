@@ -372,24 +372,27 @@ bool se_modifico_cache (Pagina *cache)
 void enviar_cambios_memoria (Pagina *cache,cpuinfo *proceso,TLBEntrada *tlb)
 {
     PaginaCache* cambios_cache=malloc(sizeof(PaginaCache));
-    t_paquete* paquete = crear_paquete();
+    cambios_cache->tipo = 4;
+    cambios_cache->pid = proceso->pid;
     int direccion_logica;
     for(int i=0;i<entradas_cache;i++)
     {
         if(cache[i].modificado)
         {
+            t_paquete* paquete = crear_paquete();
             direccion_logica= cache[i].numero_pagina * tam_pagina;
             cambios_cache->direccion_fisica = traducir_direccion(direccion_logica, proceso, tlb);
             cambios_cache->contenido = cache[i].contenido;
             cache[i].modificado = 0;
             agregar_a_paquete(paquete,cambios_cache,sizeof(PaginaCache));
+            enviar_paquete(paquete,conexion_memoria);
+            recibir_mensaje(conexion_memoria); //Recibo el OK de memoria
+            eliminar_paquete(paquete);
         }
     }
 
-    enviar_paquete(paquete,conexion_memoria);
-    recibir_mensaje(conexion_memoria); //Recibo el OK de memoria
+
     free(cambios_cache);
-    eliminar_paquete(paquete);
 
 }    
 
@@ -475,7 +478,7 @@ int main(int argc, char* argv[])
     
     
     //enviar cpu_id a memoria;
-    enviar_mensaje(argv[2], conexion_memoria);
+    //enviar_mensaje(argv[2], conexion_memoria);
 
     t_list *paquete_memoria = recibir_paquete(conexion_memoria);
     tam_pagina = *(int *)list_get(paquete_memoria, 0);
@@ -522,10 +525,15 @@ int main(int argc, char* argv[])
         list_clean_and_destroy_elements(proceso, free);
         do{
             instruccion = obtener_instruccion(procesocpu);
-            decodear_y_ejecutar_instruccion(instruccion, procesocpu, &interrupcion, cache, tlb);
-            sem_wait(&mutex_interrupcion);
-            interrupcion = check_interrupt(interrupcion);
-            sem_post(&mutex_interrupcion);
+            if(instruccion != "NO"){
+                decodear_y_ejecutar_instruccion(instruccion, procesocpu, &interrupcion, cache, tlb);
+                sem_wait(&mutex_interrupcion);
+                interrupcion = check_interrupt(interrupcion);
+                sem_post(&mutex_interrupcion);
+            } else{
+                interrupcion = true;
+            }
+
         }while(!interrupcion);
         t_paquete *paquete = crear_paquete();
         int tipo = 4;
@@ -621,6 +629,7 @@ void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, bool *
             int longitud = string_length(dato);
             t_paquete *paquete = crear_paquete();
             agregar_a_paquete(paquete, write, sizeof(memoriainfo));
+            agregar_a_paquete(paquete, longitud+1, sizeof(int));
             agregar_a_paquete(paquete, dato, (longitud+1)*sizeof(char));
             enviar_paquete(paquete, conexion_memoria);
             free(write);
@@ -691,14 +700,9 @@ void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, bool *
             enviar_paquete(paquete, conexion_memoria);
             free(read);
             eliminar_paquete(paquete);
-
-//            t_list *lista = recibir_paquete(conexion_memoria);
-//            char *leido = (char *)list_get(lista, 0);
-
             char *leido = recibir_mensaje(conexion_memoria);
             log_info(log_cpu, "PID: %d - Acción: LEER - Dirección Física: %d - Valor: %s",proceso->pid,dir_fisica,leido);
             proceso->pc = proceso->pc + 1;
-//            list_destroy(lista); 
             
             //actualizar cache
             if(entradas_cache > 0){
