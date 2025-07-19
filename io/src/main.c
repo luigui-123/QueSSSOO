@@ -40,7 +40,7 @@ int main(int argc, char* argv[]) {
         
         log_trace(io_log, "PID: %d - Inicio de IO - Tiempo: %d", *(int*)(list_get(proceso, 0)), *(int*)(list_get(proceso, 1)));
 
-        unsigned int tiempo = list_get(proceso, 1) * 1000;
+        unsigned int tiempo = *((int *)list_get(proceso, 1)) * 1000;
 
         usleep(tiempo);
 
