@@ -70,7 +70,6 @@ sem_t proceso_desalojado;
 sem_t memoria__ocupada;
 sem_t procesos_listos;
 sem_t proceso_terminando;
-sem_t espera_rafaga;
 
 struct Cpu
 {
@@ -120,9 +119,6 @@ void cambio_estado_ready(struct pcb *proceso)
     sem_wait(&semaforo_ready);
     queue_push(lista_ready, proceso);
     sem_post(&semaforo_ready);
-
-    sem_post(&procesos_listos); 
-
 }
 
 void cambio_estado_exit(struct pcb *proceso_a_terminar)
@@ -418,7 +414,7 @@ void planificador_io(struct io *io_asociada)
                 proceso->tiempo_estado = temporal_create();
 
                 log_trace(log_kernel, "%d - Pasa del estado Bloqueado al Estado Ready", proceso->PID);
-
+                sem_post(&procesos_listos);
                 cambio_estado_ready(proceso);
             }
             else
@@ -690,7 +686,6 @@ void actualizar_rafaga(struct pcb *proceso, int rafaga_real)
     sem_wait(&semaforo_execute);
     proceso->rafaga = (alfa * (double)rafaga_real + (1 - alfa) * proceso->rafaga);
     sem_post(&semaforo_execute);
-    sem_post(&espera_rafaga);
     return;
 }
 
@@ -774,8 +769,9 @@ void *planifacion_largo_plazo(void *l)
                     proceso->MT[5] += temporal_gettime(proceso->tiempo_estado);
                     temporal_destroy(proceso->tiempo_estado);
                     proceso->tiempo_estado = temporal_create();
-
+                
                     cambio_estado_ready(proceso);
+                    sem_post(&procesos_listos); 
                 }
                 else
                 {
@@ -825,6 +821,8 @@ void *planifacion_largo_plazo(void *l)
                     log_trace(log_kernel, "%d - Pasa del estado New al Estado Ready", proceso->PID);
 
                     cambio_estado_ready(proceso); 
+                    sem_post(&procesos_listos); 
+
                 }
                 else
                 {
@@ -874,6 +872,7 @@ void *planifacion_largo_plazo(void *l)
                         log_trace(log_kernel, "%d - Pasa del estado Suspended Ready al Estado Ready", proceso->PID);
 
                         cambio_estado_ready(proceso);
+                        sem_post(&procesos_listos);
                         pudo_incertar = true;
                     }
                     else
@@ -922,6 +921,7 @@ void *planifacion_largo_plazo(void *l)
                         log_trace(log_kernel, "%d - Pasa del estado New al Estado Ready", proceso->PID);
 
                         cambio_estado_ready(proceso); 
+                        sem_post(&procesos_listos);
                         pudo_incertar = true;
                     }
                     else
@@ -993,10 +993,11 @@ void *escucha_cpu_especifica(void *cpu)
             
             t_list* desalojado = recibir_paquete(cpu_especifica->socket_dispatch);
             list_destroy_and_destroy_elements(desalojado, free);
-            
-            sem_post(&espera_rafaga);
+        
 
             cambio_estado_exit(proceso_a_terminar);
+
+            sem_post(&procesos_listos);
 
             sem_wait(&semaforo_cpu);
             cpu_especifica->ocupado = 0;
@@ -1184,7 +1185,9 @@ void *planificacion_corto_plazo(void *c)
     {
 
         sem_wait(&procesos_listos);
-
+        int valor;
+        sem_getvalue(&procesos_listos, &valor);
+        printf("Valor inicial del semáforo: %d\n", valor);
 
 
         if (strcmp(tipo_planificacion, "FIFO") == 0){
@@ -1243,7 +1246,6 @@ void *planificacion_corto_plazo(void *c)
                 proceso = list_get_minimum(lista_ready->elements, comparar_rafaga);
 
                 struct pcb *proceso_a_desalojar;
-                log_trace(log_kernel, "Testeo de Entrada");
                 if (list_is_empty(lista_execute->elements)) 
                 {
                     struct Cpu *cpu_buscada = (struct Cpu *)list_get(lista_cpu, 0);
@@ -1253,26 +1255,34 @@ void *planificacion_corto_plazo(void *c)
                 }
                 else if (proceso->rafaga < (proceso_a_desalojar = list_get_maximum(lista_execute->elements, comparar_rafaga))->rafaga)
                 {
-                    log_trace(log_kernel, "Entre");
-                    // Call a CPU
-                    
-                    struct Cpu *cpu_buscada = encontrar_cpu_especifica_en_ejecucion(lista_cpu, proceso_a_desalojar->PID);
-                    char *mensaje_cpu = "DESALOJAR";
+                    if (proceso->PID != proceso_a_desalojar->PID)
+                    {
+                        struct Cpu *cpu_buscada = encontrar_cpu_especifica_en_ejecucion(lista_cpu, proceso_a_desalojar->PID);
+                        char *mensaje_cpu = "DESALOJAR";
 
-                    enviar_mensaje(mensaje_cpu, cpu_buscada->socket_interrupt);
+                        enviar_mensaje(mensaje_cpu, cpu_buscada->socket_interrupt);
 
-                    sem_wait(&proceso_desalojado);
-                    
-                    sem_post(&semaforo_execute);
-                    sem_post(&semaforo_ready);
+                        sem_wait(&proceso_desalojado);
+                        
+                        sem_post(&semaforo_execute);
+                        sem_post(&semaforo_ready);
+                        
+                        sem_post(&procesos_listos); 
 
-                    cambio_estado_execute(cpu_buscada, proceso);    
+                        cambio_estado_execute(cpu_buscada, proceso);    
+                    }
+                    else
+                    {   
+                        
+                        sem_post(&semaforo_execute);
+                        sem_post(&semaforo_ready);
+                    }
                 }
                 else
-                {
+                {                    
+                    
                     sem_post(&semaforo_execute);
                     sem_post(&semaforo_ready);
-                    sem_wait(&espera_rafaga);               
                 }
             }
             sem_post(&semaforo_cpu);
@@ -1313,7 +1323,6 @@ int main(int argc, char *argv[])
     sem_init(&proceso_desalojado, 1, 0);
     sem_init(&memoria__ocupada, 0, 1);
     sem_init(&procesos_listos, 1, 0);
-    sem_init(&espera_rafaga, 1, 1);
 
     // Kernel "Core" 10/10 Joke
     config_kernel = iniciar_config("/home/utnso/tp-2025-1c-RompeComputadoras/kernel/kernel.conf");
@@ -1357,6 +1366,7 @@ int main(int argc, char *argv[])
     
     tamanioProceso = atoi(argv[3]);
     */
+  log_info(log_kernel, "\n               ___\n             _//_\\\\\n           ,\"    //\".\n          /          \\\n        _/           |\n       (.-,--.       |\n       /o/  o \\     /\n       \\_\\    /  /\\/\\\n       (__`--'   ._)\n       /  `-.     |\n      (     ,`-.  |\n       `-,--\\_  ) |-.\n        _`.__.'  ,-' \\\n       |\\ )  _.-'    |\n       i-\\.'\\     ,--+.\n     .' .'   \\,-'/     \\\n    / /         /       \\\n    7_|         |       |\n    |/          \"i.___.j\"\n    /            |     |\\\n   /             |     | \\\n  /              |     |  |\n  |              |     |  |\n  |____          |     |-i'\n   |   \"\"\"\"----\"\"|     | |\n   \\           ,-'     |/\n    `.         `-,     |\n     |`-._      / /| |\\ \\\n     |    `-.   `' | ||`-'\n     |      |      `-'|\n     |      |         |\n     |      |         |\n     |      |         |\n     |      |         |\n     |      |         |\n     |      |         |\n     )`-.___|         |\n   .'`-.____)`-.___.-'(\n .'        .'-._____.-i\n/        .'           |h\n`-------/         .   |j\n        `--------' \"--'w\n ");
 
     getchar();
     syscall_init_procc(tamanioProceso, nombreArchivo);
