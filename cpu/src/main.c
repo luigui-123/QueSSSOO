@@ -531,9 +531,9 @@ char *obtener_instruccion(cpuinfo *procesocpu)
     log_info(log_cpu, "PID: %d - FETCH - Program Counter: %d", procesocpu->pid, procesocpu->pc);
     char *instruccion;
     t_paquete *paquete = crear_paquete();
-    int tarea = 0;
+    procesocpu->tipo = 0;
 
-    agregar_a_paquete(paquete, &tarea, sizeof(int));
+    agregar_a_paquete(paquete, &procesocpu->tipo, sizeof(int));
     agregar_a_paquete(paquete, &procesocpu->pid, sizeof(int));
     agregar_a_paquete(paquete, &procesocpu->pc, sizeof(int));
     enviar_paquete(paquete, conexion_memoria);
@@ -726,6 +726,7 @@ void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, bool *
     {
         cpuinfo *io;
         io = malloc(sizeof(cpuinfo));
+        proceso->tipo = 3;
         io->tipo = 3;
         io->pid = proceso->pid;
         io->pc = proceso->pc + 1;
@@ -750,6 +751,7 @@ void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, bool *
     {
         cpuinfo *init;
         init = malloc(sizeof(cpuinfo));
+        proceso->tipo = 1;
         init->tipo = 1;
         init->pid = proceso->pid;
         init->pc = proceso->pc + 1;
@@ -773,6 +775,7 @@ void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, bool *
     {
         cpuinfo *dump;
         dump = malloc(sizeof(cpuinfo));
+        proceso->tipo = 2;
         dump->tipo = 2;
         dump->pid = proceso->pid;
         dump->pc = proceso->pc + 1;
@@ -790,7 +793,8 @@ void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, bool *
     {
         cpuinfo *exit;
         exit = malloc(sizeof(cpuinfo));
-        exit->tipo = 0;
+        proceso->tipo = 5;
+        exit->tipo = 5;
         exit->pid = proceso->pid;
         exit->pc = proceso->pc;
         t_paquete *paquete = crear_paquete();
@@ -907,13 +911,17 @@ int main(int argc, char *argv[])
             }
 
         } while (!interrupcion);
-        t_paquete *paquete = crear_paquete();
-        int tipo = 4;
-        agregar_a_paquete(paquete, &tipo, sizeof(int));
-        agregar_a_paquete(paquete, &procesocpu->pid , sizeof(int));
-        agregar_a_paquete(paquete, &procesocpu->pc, sizeof(int));
-        enviar_paquete(paquete, conexion_kernel_dispatch);
-        eliminar_paquete(paquete);
+        // Puede haber una condición de carrera y llegar a desalojar un proceso que no es el correcto
+        if(procesocpu->tipo != 5 && procesocpu->tipo != 2 && procesocpu->tipo !=3){
+            t_paquete *paquete = crear_paquete();
+            int tipo = 4;
+            agregar_a_paquete(paquete, &tipo, sizeof(int));
+            agregar_a_paquete(paquete, &procesocpu->pid , sizeof(int));
+            agregar_a_paquete(paquete, &procesocpu->pc, sizeof(int));
+            enviar_paquete(paquete, conexion_kernel_dispatch);
+            eliminar_paquete(paquete);
+        }
+
 
         // En caso de desalojo enviar cambios de la cache a memoria si hubo modificaciones
         if (se_modifico_cache(cache))
