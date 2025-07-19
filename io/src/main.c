@@ -1,6 +1,7 @@
 #include <utils/hello.h>
 #include <commons/log.h>
 #include <commons/config.h>
+#include <commons/string.h>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <unistd.h>
@@ -16,7 +17,7 @@ t_config* io_conf;
 
 int main(int argc, char* argv[]) {
 
-    t_log * io_log = log_create("io.log", "io", false, LOG_LEVEL_TRACE);
+    t_log * io_log = log_create("io.log", "io", true, LOG_LEVEL_TRACE);
     io_conf = iniciar_config();
 
     char* ip_kernel = config_get_string_value(io_conf, "IP_KERNEL");
@@ -25,10 +26,7 @@ int main(int argc, char* argv[]) {
 
     char* nombre_io = argv[1];
 
-
-    char* mensajeFin;
-    mensajeFin = strcat("La solicitud de ", nombre_io);
-    mensajeFin = strcat(mensajeFin, " ha finalizado");
+    char* mensajeFin = string_from_format("La solicitud de %s ha finalizado", nombre_io);
 
     enviar_mensaje(nombre_io, conexion_kernel);
     recibir_mensaje(conexion_kernel);
@@ -42,7 +40,10 @@ int main(int argc, char* argv[]) {
         
         log_trace(io_log, "PID: %d - Inicio de IO - Tiempo: %d", *(int*)(list_get(proceso, 0)), *(int*)(list_get(proceso, 1)));
 
-        usleep(*(int*)(list_get(proceso, 1)));
+        unsigned int tiempo = list_get(proceso, 1) * 1000;
+
+        usleep(tiempo);
+
         log_trace(io_log, "PID: %d - Fin de IO", *(int*)(list_get(proceso, 0)));
         enviar_mensaje(mensajeFin, conexion_kernel);
     
