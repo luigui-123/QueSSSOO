@@ -68,7 +68,7 @@ sem_t procesos_bloqueados;
 sem_t cpu_disponibles;
 sem_t procesos_creados;
 sem_t proceso_desalojado;
-sem_t memoria__ocupada;
+sem_t memoria_ocupada;
 sem_t procesos_listos;
 sem_t proceso_terminando;
 
@@ -199,7 +199,7 @@ void cambio_estado_exit(struct pcb *proceso_a_terminar)
     if (!strcmp(rta, "OK"))
     {
         free(rta);
-        sem_post(&memoria__ocupada);
+        sem_post(&memoria_ocupada);
 
         log_trace(log_kernel, "%d - Finaliza el proceso", proceso_a_terminar->PID);
 
@@ -442,7 +442,10 @@ void planificador_io(struct io *io_asociada)
                 sem_wait(&semaforo_bloqued_sus);
                 proceso = encontrar_proceso_especifico(lista_sus_bloqued, peticion->pid);
                 if (!proceso)
+                {
+                    proceso = list_get(lista_bloqued->elements, 0);
                     abort();
+                }
                 list_remove_element(lista_sus_bloqued->elements, proceso);
 
                 sem_wait(&semaforo_ready_sus);
@@ -640,9 +643,11 @@ void suspender_proceso(struct pcb *proceso)
     agregar_a_paquete(paquete_dump, (void *)puntero_pid, sizeof(int));
     enviar_paquete(paquete_dump, conexion);
     free(puntero_pid);
-    sem_post(&memoria__ocupada);
-
+    
     recibir_mensaje(conexion);
+    
+    sem_post(&memoria_ocupada);
+
 
     eliminar_paquete(paquete_dump);
     return;
@@ -654,6 +659,10 @@ void *cronometrar_proceso(void *data)
     int tiempo = (config_get_int_value(config_kernel, "TIEMPO_SUSPENSION") * 1000);
 
     unsigned int cant_veces = proceso->ME[3];
+
+        log_trace(log_kernel, "%d - ENTRANDO A CRONOMETRO", proceso->PID);
+
+
     usleep(tiempo);
 
     sem_wait(&semaforo_bloqued);
@@ -778,13 +787,15 @@ void *planifacion_largo_plazo(void *l)
                 {
                     free(rta);
                     sem_post(&semaforo_ready_sus);
-                    sem_wait(&memoria__ocupada);
+                    sem_wait(&memoria_ocupada);
+                    sem_post(&procesos_creados);
+
                 }
             }
             else if (!lista_new_vacia)
             {
                 sem_wait(&semaforo_new);
-                proceso = (struct pcb *)queue_pop(lista_new);
+                proceso = (struct pcb *)queue_peek(lista_new);
 
                 int tamanio = proceso->tamanio;
                 char *path_proceso = proceso->path;
@@ -812,6 +823,8 @@ void *planifacion_largo_plazo(void *l)
                 if (!strcmp(rta, "OK"))
                 {
                     free(rta);
+                    proceso = (struct pcb *)queue_pop(lista_new);
+
                     sem_post(&semaforo_new);
                     proceso->ME[1] += 1;
                     temporal_stop(proceso->tiempo_estado);
@@ -826,7 +839,9 @@ void *planifacion_largo_plazo(void *l)
                 else
                 {
                     sem_post(&semaforo_new);
-                    sem_wait(&memoria__ocupada);
+                    sem_wait(&memoria_ocupada);
+                    sem_post(&procesos_creados);
+
                 }
             }
             else
@@ -834,14 +849,15 @@ void *planifacion_largo_plazo(void *l)
                 abort();
             }
         }
-        else if (strcmp(tipo_planificacion, "PCMP") == 0)
+        else if (strcmp(tipo_planificacion, "PMCP") == 0)
         {
             bool pudo_incertar = false;
             while (!pudo_incertar)
             {
                 if (!lista_sus_ready_vacia)
                 {
-                    proceso = (struct pcb *)list_get_minimum((t_list *)lista_sus_ready, encontrar_proceso_pequeño);
+                    sem_wait(&semaforo_ready_sus);
+                    proceso = (struct pcb *)list_get_minimum(lista_sus_ready->elements, encontrar_proceso_pequeño);
 
                     int conexion_memoria = peticion_memoria();
 
@@ -860,6 +876,8 @@ void *planifacion_largo_plazo(void *l)
                     eliminar_paquete(paquete_proceso);
                     if (!strcmp(rta, "OK"))
                     {
+                        list_remove_element(lista_sus_ready->elements, proceso);
+
                         free(rta);
                         sem_post(&semaforo_ready_sus);
                         proceso->ME[1] += 1;
@@ -878,13 +896,17 @@ void *planifacion_largo_plazo(void *l)
                         free(rta);
                         sem_post(&semaforo_ready_sus);
 
-                        sem_wait(&memoria__ocupada);
+                        sem_wait(&memoria_ocupada);
+                        sem_post(&procesos_creados);
+
                     }
                 }
 
                 else if (!lista_new_vacia)
                 {
-                    proceso = (struct pcb *)list_get_minimum((t_list *)lista_new, encontrar_proceso_pequeño);
+                    sem_post(&semaforo_new);
+
+                    proceso = (struct pcb *)list_get_minimum(lista_new->elements, encontrar_proceso_pequeño);
                     int tamnio_proceso = proceso->tamanio;
                     char *path_proceso = proceso->path;
                     int conexion_memoria = peticion_memoria();
@@ -908,8 +930,10 @@ void *planifacion_largo_plazo(void *l)
                     eliminar_paquete(paquete_proceso);
                     if (!strcmp(rta, "OK"))
                     {
+                        list_remove_element(lista_new->elements, proceso);
+
                         free(rta);
-                        sem_post(&semaforo_ready);
+                        sem_post(&semaforo_new);
                         proceso->ME[1] += 1;
                         temporal_stop(proceso->tiempo_estado);
                         proceso->MT[0] += temporal_gettime(proceso->tiempo_estado);
@@ -924,7 +948,9 @@ void *planifacion_largo_plazo(void *l)
                     else
                     {
                         sem_post(&semaforo_ready);
-                        sem_wait(&memoria__ocupada);
+                        sem_wait(&memoria_ocupada);
+                        sem_post(&procesos_creados);
+
                     }
                 }
             }
@@ -1268,7 +1294,7 @@ int main(int argc, char *argv[])
 
     sem_init(&cpu_disponibles, 1, 0);
     sem_init(&proceso_desalojado, 1, 0);
-    sem_init(&memoria__ocupada, 0, 1);
+    sem_init(&memoria_ocupada, 0, 1);
     sem_init(&procesos_listos, 1, 0);
 
     // Kernel "Core" 10/10 Joke
@@ -1277,7 +1303,7 @@ int main(int argc, char *argv[])
     log_kernel = log_create("kernel.log", "kernel", true, LOG_LEVEL_TRACE);
     contador_procesos = 0;
 
-    char *nombreArchivo = "PLANI_CORTO_PLAZO";
+    char *nombreArchivo = "PLANI_LYM_PLAZO";
     int tamanioProceso = 0;
 
     pthread_t servidor_cpu;
