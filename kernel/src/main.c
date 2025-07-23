@@ -1,1354 +1,960 @@
-#include <utils/hello.h>
 #include <commons/log.h>
 #include <commons/config.h>
+#include <commons/string.h>
+#include <commons/collections/list.h>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <unistd.h>
-#include <commons/collections/list.h>
-#include <commons/collections/queue.h>
+#include <stdbool.h>
+#include <utils/hello.h>
 #include <pthread.h>
-#include <string.h>
 #include <semaphore.h>
-#include <commons/temporal.h>
-#include <commons/collections/dictionary.h>
-#include <stdio.h>
-#include <commons/string.h>
+#include <math.h>
+#include <string.h>
 
-#define PROCESO_NUEVO 6
-#define SUSPENDER 7
-#define DESUSPENDER 8
-#define DUMP 9
-#define FINALIZAR 10
+// variables globales
+int tam_pagina;         // pide a memoria
+int niveles_tabla;      // pide a memoria
+int entradas_por_tabla; // pide a memoria
+int conexion_memoria;
+int conexion_kernel_dispatch;
+int conexion_kernel_interrupt;
+int entradas_tlb;
+char *reemplazo_tlb;
+int entradas_cache;
+char *reemplazo_cache;
+int retardo_cache;
 
-struct pcb
+t_log *log_cpu;
+t_config *config;
+
+typedef struct
 {
-    int PID;
-    int PC;
-    int64_t MT[7];
-    int ME[7];
-    int tamanio;
-    char *path;
-    double rafaga;
-    t_temporal *tiempo_estado;
-    sem_t mutex_rafaga;
-};
-
-// MT--> 0 New, 1 Ready, 2 Execute, 3 BLocked, 4 BLocked SUspended, 5 Ready suspended, 6 Exit
-
-// Listas
-t_list *lista_cpu;
-t_list *lista_io;
-
-// Misc
-int contador_procesos;
-t_config *config_kernel;
-t_log *log_kernel;
-
-// Queues de Procesos
-t_queue *lista_new;
-t_queue *lista_ready;
-t_queue *lista_sus_ready;
-t_queue *lista_execute;
-t_queue *lista_bloqued;
-t_queue *lista_sus_bloqued;
-t_queue *lista_finished;
-
-// Semaforos
-sem_t semaforo_ready;
-sem_t semaforo_bloqued;
-sem_t semaforo_bloqued_sus;
-sem_t semaforo_execute;
-sem_t semaforo_new;
-sem_t semaforo_ready_sus;
-
-sem_t semaforo_cpu;
-sem_t semaforo_io;
-
-sem_t procesos_bloqueados;
-sem_t cpu_disponibles;
-sem_t procesos_creados;
-sem_t proceso_desalojado;
-sem_t memoria_ocupada;
-sem_t procesos_listos;
-sem_t proceso_terminando;
-
-sem_t interrupciones;
-struct Cpu
-{
-    int socket_dispatch;
-    int socket_interrupt;
-    char *id;
-    struct pcb *proceso;
-};
-struct io
-{
-    int socket_io;
-    char *nombre;
-    sem_t usando_io; // IO Libre
-    t_queue *espera;
-};
-
-struct peticion_io
-{
-    struct io *io_asociada;
-    long tiempo;
+    int tipo;
     int pid;
-};
+    int pc;
+} cpuinfo;
 
-t_config *iniciar_config(char *ruta)
+typedef struct
 {
-    t_config *nuevo_config = config_create(ruta);
-    return nuevo_config;
+    int tipo; // 1-Read / 2-Write / 3-Solicitar Pagina (Cache)
+    int pid;
+    int direccion;
+} memoriainfo;
+
+typedef struct
+{
+    int conexion;
+    t_log *log;
+} infohilointerrupcion;
+
+typedef struct
+{
+    int tipo; // 4 (Para enviar pagina a Memoria)
+    int pid;
+    int direccion_fisica;
+    char *contenido;
+} PaginaCache;
+
+//-------------------------conexiones--------------------------------
+t_list *recibir_procesos();
+char *obtener_instruccion(cpuinfo *);
+
+void conectar_kernel_interrupt()
+{
+    char *ip_kernel_interrupt = config_get_string_value(config, "IP_KERNEL");
+    char *puerto_kernel_interrupt = config_get_string_value(config, "PUERTO_KERNEL_INTERRUPT");
+    conexion_kernel_interrupt = iniciar_conexion(ip_kernel_interrupt, puerto_kernel_interrupt);
+    return;
 }
 
-int peticion_memoria()
+void conectar_kernel_dispatch()
 {
-    char *puerto_memoria = config_get_string_value(config_kernel, "PUERTO_MEMORIA");
-    char *ip_memoria = config_get_string_value(config_kernel, "IP_MEMORIA");
-    int conexion_memoria = iniciar_conexion(ip_memoria, puerto_memoria);
-
-    t_list *Handshake = recibir_paquete(conexion_memoria);
-
-    list_destroy_and_destroy_elements(Handshake, free);
-
-    return conexion_memoria;
+    char *ip_kernel_dispatch = config_get_string_value(config, "IP_KERNEL");
+    char *puerto_kernel_dispatch = config_get_string_value(config, "PUERTO_KERNEL_DISPATCH");
+    conexion_kernel_dispatch = iniciar_conexion(ip_kernel_dispatch, puerto_kernel_dispatch);
+    return;
 }
 
-
-void *comparar_rafaga(void *p1, void *p2)
+void conectar_memoria()
 {
-    struct pcb *proceso1 = (struct pcb *)p1;
-    struct pcb *proceso2 = (struct pcb *)p2;
-
-    return proceso1->rafaga <= proceso2->rafaga ? proceso1 : proceso2;
+    char *ip_memoria = config_get_string_value(config, "IP_MEMORIA");
+    char *puerto_memoria = config_get_string_value(config, "PUERTO_MEMORIA");
+    conexion_memoria = iniciar_conexion(ip_memoria, puerto_memoria);
+    return;
 }
 
-struct Cpu *encontrar_cpu_especifica_en_ejecucion(t_list *lista, int pid)
+void iniciar_config(char *path_config)
 {
-    bool encontrar_proceso(void *elemento)
+    config = config_create(path_config);
+    conectar_kernel_dispatch();
+    conectar_kernel_interrupt();
+    conectar_memoria();
+    entradas_cache = config_get_int_value(config, "ENTRADAS_CACHE");
+    retardo_cache = config_get_int_value(config, "RETARDO_CACHE");
+    entradas_tlb = config_get_int_value(config, "ENTRADAS_TLB");
+    reemplazo_cache = config_get_string_value(config, "REEMPLAZO_CACHE");
+    reemplazo_tlb = config_get_string_value(config, "REEMPLAZO_TLB");
+}
+//---------------------------------------TLB----------------------------------------
+
+// Estructura para una entrada de la TLB
+typedef struct
+{
+    int pagina;
+    int marco;
+    int menos_usado; // Registro del último uso (para LRU)
+    int numero_ingreso;
+} TLBEntrada;
+
+int contador_acceso = 0; // Contador global para registrar accesos
+int contador_ingresos = 0;
+
+// Inicializar la TLB
+void inicializar_tlb(TLBEntrada *tlb)
+{
+    for (int i = 0; i < entradas_tlb; i++)
     {
-        struct Cpu *cpu = (struct Cpu *)elemento;
-        return cpu->proceso->PID == pid;
+        tlb[i].pagina = -1;
+        tlb[i].marco = -1;
+        tlb[i].menos_usado = -1; // Sin historial de uso
+        tlb[i].numero_ingreso = -1;
     }
-    struct Cpu *cpu_buscada = ((struct Cpu *)list_find(lista, encontrar_proceso));
-    return cpu_buscada;
+    contador_acceso = 0; // Inicializa el contador global
+    contador_ingresos = 0;
 }
 
-
-bool buscar_disponible(void *elemento)
+// Buscar en la TLB el marco
+int buscar_tlb(TLBEntrada *tlb, int pagina, int proceso)
 {
-    struct Cpu *cpu_especifica = (struct Cpu *)elemento;
-    return cpu_especifica->proceso == NULL;
-}
-
-
-void cambio_estado_ready(struct pcb *proceso)
-{
-    sem_wait(&semaforo_ready);
-    queue_push(lista_ready, proceso);
-    sem_post(&semaforo_ready);
-        
-    if (strcmp(config_get_string_value(config_kernel, "ALGORITMO_CORTO_PLAZO"), "SRT") == 0)
+    for (int i = 0; i < entradas_tlb; i++)
     {
-        sem_wait(&semaforo_cpu);
-        struct Cpu *cpu_libre = (struct Cpu *)list_find(lista_cpu, buscar_disponible);
-        if (cpu_libre || list_is_empty(lista_execute->elements)) {
-            sem_post(&semaforo_cpu);
-            sem_post(&procesos_listos);
-            return;
-        }
-        
-        struct pcb* proceso_a_desalojar = list_get_maximum(lista_execute->elements, comparar_rafaga);
-        if (proceso->rafaga < proceso_a_desalojar->rafaga)
+        if (tlb[i].pagina == pagina)
         {
-            struct Cpu *cpu_a_desalojar = encontrar_cpu_especifica_en_ejecucion(lista_cpu, proceso_a_desalojar->PID);
-            // Enviar cpu socket interrupt
-            
-            char* mensaje = "DESALOJAR";
+            log_info(log_cpu, "PID: %d - TLB HIT - Pagina: %d", proceso, pagina);
 
-            log_trace(log_kernel, "%d - Desalojado por algoritmo SJF/SRT", proceso_a_desalojar->PID);
-            
-
-            enviar_mensaje(mensaje, cpu_a_desalojar->socket_interrupt);
-        
-        } 
-        sem_post(&semaforo_cpu);
+            return (tlb[i].marco); // Devuelve el número de marco
+        }
     }
-    sem_post(&procesos_listos);
+    log_info(log_cpu, "PID: %d - TLB MISS - Pagina: %d", proceso, pagina);
+    return -1; // Si no se encuentra, devuelve -1
 }
 
-void cambio_estado_exit(struct pcb *proceso_a_terminar)
+// Encuentra el índice LRU para reemplazo
+int buscar_entrada_lru(TLBEntrada *tlb)
 {
-    proceso_a_terminar->ME[6] += 1;
+    int indice_lru = 0;
+    int min_menos_usado = tlb[0].menos_usado; // El valor de referencia de la primera entrada
 
-    int conexion_memoria = peticion_memoria();
-
-    t_paquete *paquete_proceso_terminado = crear_paquete();
-
-    int *puntero_pid = malloc(sizeof(int));
-    *puntero_pid = proceso_a_terminar->PID;
-
-    int codigo = FINALIZAR;
-
-    agregar_a_paquete(paquete_proceso_terminado, &codigo, sizeof(int));
-
-    agregar_a_paquete(paquete_proceso_terminado, (void *)puntero_pid, sizeof(int));
-    enviar_paquete(paquete_proceso_terminado, conexion_memoria);
-
-    char *rta = recibir_mensaje(conexion_memoria);
-    if (!strcmp(rta, "OK"))
+    for (int i = 1; i < entradas_tlb; i++)
     {
-        free(rta);
-        sem_post(&memoria_ocupada);
 
-        log_trace(log_kernel, "%d - Finaliza el proceso", proceso_a_terminar->PID);
-
-        // LOG innecesariamente largo del TP:
-        log_trace(log_kernel, "## (%d) - Métricas de estado: NEW (%d) (%.2lu), READY (%d) (%.2lu), EXECUTE (%d) (%.2lu), BLOCKED (%d) (%.2lu), SUSPENDED BLOCKED (%d) (%.2lu), SUSPENDED READY (%d) (%.2lu), EXIT (%d) (%.2lu)",
-                  proceso_a_terminar->PID,
-                  proceso_a_terminar->ME[0], proceso_a_terminar->MT[0],
-                  proceso_a_terminar->ME[1], proceso_a_terminar->MT[1],
-                  proceso_a_terminar->ME[2], proceso_a_terminar->MT[2],
-                  proceso_a_terminar->ME[3], proceso_a_terminar->MT[3],
-                  proceso_a_terminar->ME[4], proceso_a_terminar->MT[4],
-                  proceso_a_terminar->ME[5], proceso_a_terminar->MT[5],
-                  proceso_a_terminar->ME[6], proceso_a_terminar->MT[6]);
-
-        queue_push(lista_finished, proceso_a_terminar);
-        // temporal_destroy(proceso_a_terminar->tiempo_estado);
-
-        eliminar_paquete(paquete_proceso_terminado);
+        if (tlb[i].menos_usado < min_menos_usado)
+        {
+            min_menos_usado = tlb[i].menos_usado;
+            indice_lru = i;
+        }
     }
-    else
-        abort();
+    return indice_lru;
 }
 
-struct pcb *encontrar_proceso_especifico(t_queue *lista, int pid)
+int buscar_entrada_fifo(TLBEntrada *tlb)
 {
-    bool encontrar_proceso(void *elemento)
+    int indice_fifo = 0;
+    int primero_ingresado = tlb[0].numero_ingreso;
+
+    for (int i = 1; i < entradas_tlb; i++)
     {
-        struct pcb *proceso = (struct pcb *)elemento;
-        return proceso->PID == pid;
+        if (tlb[i].numero_ingreso < primero_ingresado)
+        {
+            primero_ingresado = tlb[i].numero_ingreso;
+            indice_fifo = i;
+        }
     }
-    struct pcb *proceso = (struct pcb *)list_find(lista->elements, encontrar_proceso);
+    return indice_fifo;
+}
+
+void actualizar_tlb(TLBEntrada *tlb, int pagina, int marco)
+{
+    int indice = -1;
+    if (!strcmp(reemplazo_tlb, "LRU"))
+    {
+        // Encuentra el índice a reemplazar según LRU
+        indice = buscar_entrada_lru(tlb);
+    }
+    else if (!strcmp(reemplazo_tlb, "FIFO"))
+    {
+        indice = buscar_entrada_fifo(tlb);
+    }
+    // Reemplazar la entrada
+    tlb[indice].pagina = pagina;
+    tlb[indice].marco = marco;
+    contador_acceso++;
+    tlb[indice].menos_usado = contador_acceso;
+    contador_ingresos++;
+    tlb[indice].numero_ingreso = contador_ingresos;
+    printf("TLB actualizado: Página %d -> Marco %d (Reemplazando entrada %d)\n",
+           pagina, marco, indice);
+    return;
+}
+
+int traducir_direccion(int direccion_logica, cpuinfo *proceso, TLBEntrada *tlb)
+{
+    int numero_pagina = direccion_logica / tam_pagina;
+    int desplazamiento = direccion_logica % tam_pagina;
+
+    int marco;
+    if ((marco = buscar_tlb(tlb, numero_pagina, proceso->pid)) + 1) // TLB hit (sumo 1 porque si no lo encuentra, marco=-1)
+    {
+        return (marco * tam_pagina + desplazamiento);
+    }
+    else // TLB miss
+    {
+        t_paquete *paquete = crear_paquete();
+
+        int *puntero_pid = malloc(sizeof(int));
+        *puntero_pid = proceso->pid;
+
+        int codigo = 5;
+
+        agregar_a_paquete(paquete, &codigo, sizeof(int)); // 5 -> Envio marco
+        agregar_a_paquete(paquete, (void *)puntero_pid, sizeof(int));
+
+        int n;
+        for (int i = 1; i <= niveles_tabla; i++)
+        {
+            n = (numero_pagina / (int)pow(entradas_por_tabla, niveles_tabla - i)) % entradas_por_tabla;
+            agregar_a_paquete(paquete, &n, sizeof(int));
+        }
+        enviar_paquete(paquete, conexion_memoria);
+        eliminar_paquete(paquete);
+        int marco;
+        t_list *lista = recibir_paquete(conexion_memoria);
+        marco = *(int *)list_get(lista, 0);
+        list_destroy_and_destroy_elements(lista, free);
+
+        return (marco * tam_pagina + desplazamiento);
+    }
+}
+
+//-----------------------------------Cache-----------------------------------------
+
+// cache de paginas
+typedef struct
+{
+    int numero_pagina;
+    int modificado;
+    char *contenido;
+    int referencia_bit; // utilzado por el algoritmo Clock
+} Pagina;
+
+int puntero = 0; // apunta la entrada actual de cache
+int frames_cargados = 0;
+
+// Inicializar cache
+void inicializar_cache(Pagina *cache)
+{
+    for (int i = 0; i < entradas_cache; i++)
+    {
+        cache[i].numero_pagina = -1;
+        cache[i].modificado = 0;
+        cache[i].referencia_bit = 0;
+        for (int j = 0; j < tam_pagina; j++)
+        {
+            cache[i].contenido[j] = '0';
+        }
+    }
+    puntero = 0;
+    frames_cargados = 0;
+}
+bool esta_en_cache(Pagina *cache, int numero_pagina, cpuinfo *proceso)
+{
+    usleep(retardo_cache * 1000);
+    for (int i = 0; i < entradas_cache; i++)
+    {
+        if (cache[i].numero_pagina == numero_pagina)
+        {
+            log_info(log_cpu, "PID: %d - Cache Hit - Pagina: %d", proceso->pid, numero_pagina);
+            return true;
+        }
+    }
+    log_info(log_cpu, "PID: %d - Cache Miss - Pagina: %d", proceso->pid, numero_pagina);
+    return false;
+}
+// Busca una pagina en cache y retorna el indice
+int buscar_cache(Pagina *cache, int numero_pagina)
+{
+    for (int i = 0; i < entradas_cache; i++)
+    {
+        if (cache[i].numero_pagina == numero_pagina)
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+char *leer_cache(Pagina *cache, int numero_pagina, int desplazamiento, int longitud)
+{
+    char *contenido = malloc(sizeof(char) * (longitud + 1));
+    int indice;
+    indice = buscar_cache(cache, numero_pagina);
+    for (int j = desplazamiento; j < desplazamiento + longitud; j++)
+    {
+        contenido[j - desplazamiento] = cache[indice].contenido[j];
+    }
+    cache[indice].referencia_bit = 1;
+
+    contenido[longitud] = '\0';
+    return contenido;
+}
+
+void escribir_cache(Pagina *cache, int numero_pagina, const char *contenido, int desplazamiento, int longitud)
+{
+    int indice;
+    indice = buscar_cache(cache, numero_pagina);
+    for (int j = desplazamiento; j < desplazamiento + longitud; j++)
+    {
+        cache[indice].contenido[j] = contenido[j - desplazamiento];
+    }
+    cache[indice].referencia_bit = 1;
+    cache[indice].modificado = 1;
+
+    return;
+}
+
+void actualizar_cache(Pagina *cache, Pagina *pagina, cpuinfo *proceso, TLBEntrada *tlb)
+{
+    PaginaCache *cambio_cache = malloc(sizeof(PaginaCache));
+    cambio_cache->tipo = 4;
+    cambio_cache->pid = proceso->pid;
+    t_paquete *paquete = crear_paquete();
+    int direccion_logica;
+    bool reemplazado = false;
+    int indice;
+    if (!strcmp(reemplazo_cache, "CLOCK"))
+    {
+        if ((indice = buscar_cache(cache, pagina->numero_pagina)) + 1) // RETORNA INDICE DE PAG EN CACHE
+        {
+            cache[indice].referencia_bit = 1;
+            reemplazado = true;
+        }
+        while (reemplazado == false)
+        {
+            if (cache[puntero].referencia_bit == 0)
+            {
+
+                if (cache[puntero].modificado)
+                // si hubo modficaciones
+                {
+                    cambio_cache->contenido = cache[puntero].contenido;
+                    direccion_logica = cache[puntero].numero_pagina * tam_pagina;
+                    
+                    cambio_cache->direccion_fisica = traducir_direccion(direccion_logica, proceso, tlb);
+                    
+                    agregar_a_paquete(paquete,&cambio_cache->tipo,sizeof(int));
+                    agregar_a_paquete(paquete,&cambio_cache->pid,sizeof(int));
+                    agregar_a_paquete(paquete,&cambio_cache->direccion_fisica,sizeof(int));
+                    agregar_a_paquete(paquete,cambio_cache->contenido,string_length(cache->contenido));
+                    
+                    enviar_paquete(paquete, conexion_memoria);
+                    recibir_mensaje(conexion_memoria); // Espero la confirmacion de memoria
+                    log_info(log_cpu, "PID: %d - Memory Update - Página: %d - Frame: %d", proceso->pid, pagina->numero_pagina, cambio_cache->direccion_fisica);
+                }
+
+                // Reemplazar la pagina
+                log_info(log_cpu, "PID: %d - Cache Add - Pagina: %d", proceso->pid, pagina->numero_pagina);
+                cache[puntero].numero_pagina = pagina->numero_pagina;
+                cache[puntero].modificado = 0;
+                strncpy(cache[puntero].contenido, pagina->contenido, tam_pagina);
+                cache[puntero].referencia_bit = 1;        // Setea el bit referencia en 1
+                puntero = (puntero + 1) % entradas_cache; // Mueve el puntero clock
+                reemplazado = true;
+                if (frames_cargados < entradas_tlb)
+                    frames_cargados++;
+            }
+            else
+            {
+                // Setea el bit de referencia en 0  y mueva el puntero clock
+                cache[puntero].referencia_bit = 0;
+                puntero = (puntero + 1) % entradas_cache;
+            }
+        }
+    }
+    else if (!strcmp(reemplazo_cache, "CLOCK-M"))
+    {
+        if ((indice = buscar_cache(cache, pagina->numero_pagina)) + 1)
+        {
+            cache[indice].referencia_bit = 1;
+            reemplazado = true;
+        }
+        while (reemplazado == false)
+        {
+            for (int i = 0; i < entradas_cache; i++)
+            {
+                if (cache[puntero].referencia_bit == 0 && cache[puntero].modificado == 0 && reemplazado == false)
+                {
+                    // Reemplazar la pagina
+                    log_info(log_cpu, "PID: %d - Cache Add - Pagina: %d", proceso->pid, pagina->numero_pagina);
+                    cache[puntero].numero_pagina = pagina->numero_pagina;
+                    cache[puntero].modificado = 0;
+                    strncpy(cache[puntero].contenido, pagina->contenido, tam_pagina);
+                    cache[puntero].referencia_bit = 1;        // Setea el bit referencia en 1
+                    puntero = (puntero + 1) % entradas_cache; // Mueve el puntero clock
+                    reemplazado = true;
+                    if (frames_cargados < entradas_tlb)
+                        frames_cargados++;
+                }
+                else if (reemplazado == false)
+                {
+                    puntero = (puntero + 1) % entradas_cache;
+                }
+            }
+
+            for (int i = 0; i < entradas_cache; i++)
+            {
+                if (cache[puntero].referencia_bit == 0 && cache[puntero].modificado == 1 && reemplazado == false)
+                {
+                    cambio_cache->contenido = cache[puntero].contenido;
+                    direccion_logica = cache[puntero].numero_pagina * tam_pagina;
+                    cambio_cache->direccion_fisica = traducir_direccion(direccion_logica, proceso, tlb);
+                    agregar_a_paquete(paquete, &cambio_cache->tipo, sizeof(int));
+                    agregar_a_paquete(paquete, &cambio_cache->pid, sizeof(int));
+                    agregar_a_paquete(paquete, &cambio_cache->direccion_fisica, sizeof(int));
+                    agregar_a_paquete(paquete, cambio_cache->contenido, sizeof(char)*tam_pagina);
+                    enviar_paquete(paquete, conexion_memoria);
+                    recibir_mensaje(conexion_memoria); // Espero la confirmacion de memoria
+                    log_info(log_cpu, "PID: %d - Memory Update - Página: %d - Frame: %d", proceso->pid, pagina->numero_pagina, cambio_cache->direccion_fisica);
+
+                    log_info(log_cpu, "PID: %d - Cache Add - Pagina: %d", proceso->pid, pagina->numero_pagina);
+                    cache[puntero].numero_pagina = pagina->numero_pagina;
+                    cache[puntero].modificado = 0;
+                    strncpy(cache[puntero].contenido, pagina->contenido, tam_pagina);
+                    cache[puntero].referencia_bit = 1;        // Setea el bit referencia en 1
+                    puntero = (puntero + 1) % entradas_cache; // Mueve el puntero clock
+                    reemplazado = true;
+                    if (frames_cargados < entradas_tlb)
+                        frames_cargados++;
+                }
+                else if (reemplazado == false)
+                {
+                    cache[puntero].referencia_bit = 0;
+                    puntero = (puntero + 1) % entradas_cache;
+                }
+            }
+        }
+    }
+
+    free(cambio_cache);
+    eliminar_paquete(paquete);
+}
+
+bool se_modifico_cache(Pagina *cache)
+{
+    for (int i = 0; i < entradas_cache; i++)
+    {
+        if (cache[i].modificado)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+// seria para cuando se dealoja al proceso
+void enviar_cambios_memoria(Pagina *cache, cpuinfo *proceso, TLBEntrada *tlb)
+{
+    PaginaCache *cambios_cache = malloc(sizeof(PaginaCache));
+    cambios_cache->tipo = 4;
+    cambios_cache->pid = proceso->pid;
+    int direccion_logica;
+    for (int i = 0; i < entradas_cache; i++)
+    {
+        if (cache[i].modificado)
+        {
+            t_paquete *paquete = crear_paquete();
+            direccion_logica = cache[i].numero_pagina * tam_pagina;
+            cambios_cache->direccion_fisica = traducir_direccion(direccion_logica, proceso, tlb);
+            cambios_cache->contenido = cache[i].contenido;
+            cache[i].modificado = 0;
+            agregar_a_paquete(paquete, &cambios_cache->tipo, sizeof(int));
+            agregar_a_paquete(paquete, &cambios_cache->pid, sizeof(int));
+            agregar_a_paquete(paquete, &cambios_cache->direccion_fisica, sizeof(int));
+            agregar_a_paquete(paquete, cambios_cache->contenido, sizeof(char)*tam_pagina);
+            enviar_paquete(paquete, conexion_memoria);
+            recibir_mensaje(conexion_memoria); // Recibo el OK de memoria
+            eliminar_paquete(paquete);
+        }
+    }
+
+    free(cambios_cache);
+}
+
+sem_t mutex_interrupcion;
+bool interrupcion_conexion = false;
+
+void *escuchar_conexion_interrupt(void *i)
+{
+    while (1)
+    {
+        char *mensaje = recibir_mensaje(conexion_kernel_interrupt);
+        log_info(log_cpu, "Llega interrupcion al puerto Interrupt");
+        if (!strcmp(mensaje, "DESALOJAR"))
+        {
+            sem_wait(&mutex_interrupcion);
+            interrupcion_conexion = true;
+            sem_post(&mutex_interrupcion);
+        }
+        return NULL;
+    }
+}
+
+bool check_interrupt(bool interrupcion)
+{
+    if (interrupcion_conexion)
+    {
+        interrupcion_conexion = false;
+        return true;
+    }
+    return interrupcion;
+}
+
+t_list *recibir_procesos()
+{
+    t_list *proceso;
+    proceso = recibir_paquete(conexion_kernel_dispatch);
+
     return proceso;
 }
 
-void syscall_init_procc(int tamanio, char *nombre)
+char *obtener_instruccion(cpuinfo *procesocpu)
 {
-    struct pcb *proceso_nuevo;
+    log_info(log_cpu, "PID: %d - FETCH - Program Counter: %d", procesocpu->pid, procesocpu->pc);
+    char *instruccion;
+    t_paquete *paquete = crear_paquete();
+    procesocpu->tipo = 0;
 
-    proceso_nuevo = malloc(sizeof(struct pcb));
-    if (tamanio < 0)
-        return;
+    agregar_a_paquete(paquete, &procesocpu->tipo, sizeof(int));
+    agregar_a_paquete(paquete, &procesocpu->pid, sizeof(int));
+    agregar_a_paquete(paquete, &procesocpu->pc, sizeof(int));
+    enviar_paquete(paquete, conexion_memoria);
+    eliminar_paquete(paquete);
+    instruccion = recibir_mensaje(conexion_memoria);
 
-    if (!strcmp(nombre, ""))
-        return;
-
-    proceso_nuevo->PID = contador_procesos;
-    proceso_nuevo->tamanio = tamanio;
-    // proceso_nuevo->path = nombre;
-    proceso_nuevo->path = string_duplicate(nombre);
-    proceso_nuevo->PC = 0;
-
-    proceso_nuevo->rafaga = config_get_double_value(config_kernel, "ESTIMACION_INICIAL");
-
-    proceso_nuevo->tiempo_estado = temporal_create();
-    proceso_nuevo->ME[0] += 1;
-    sem_init(&proceso_nuevo->mutex_rafaga, 0, 1);
-
-    sem_wait(&semaforo_new);
-    queue_push(lista_new, proceso_nuevo);
-    sem_post(&semaforo_new);
-
-    contador_procesos += 1;
-
-    log_trace(log_kernel, "%d Se crea el proceso - Estado: NEW", proceso_nuevo->PID);
-
-    sem_post(&procesos_creados);
-    return;
+    return instruccion;
 }
 
-void syscall_dump_memory(int *pid_proceso)
+void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, bool *interrupcion, Pagina *cache, TLBEntrada *tlb)
 {
-    int pid = *pid_proceso;
-    int conexion = peticion_memoria();
-    t_paquete *paquete_dump = crear_paquete();
+    printf("REcibo instruccion: %s", instruccion);
+    instruccion = string_duplicate(strtok(instruccion, "\n"));
+    char *pedacito = NULL;
+    char *origen = instruccion;
+    t_list *instruccion_separada = list_create();
+    char *comando;
+    char *parametros = string_new();
+    while ((pedacito = strtok(origen, " ")))
+    {
+        list_add(instruccion_separada, string_duplicate(pedacito));
+        log_trace(log_cpu, "Pedacito: %s\n", pedacito);
+        if (origen)
+        {
+            comando = list_get(instruccion_separada, 0);
+            origen = NULL;
+        }
+        else
+        {
+            string_append(&parametros, " ");
+            string_append(&parametros, string_duplicate(pedacito));
+        }
+    }
+    log_info(log_cpu, "---------------");
 
-    int codigo = DUMP; // Codigo de Dump
-
-    agregar_a_paquete(paquete_dump, &codigo, sizeof(int));
-
-    agregar_a_paquete(paquete_dump, (void *)pid_proceso, sizeof(int));
-    enviar_paquete(paquete_dump, conexion);
-    free(pid_proceso);
-    // Preguntar que significa "Error"
-    eliminar_paquete(paquete_dump);
-
-    char *mensaje = recibir_mensaje(conexion);
-
-    if (!strcmp(mensaje, "NO"))
+    log_info(log_cpu, "PID: %d - Ejecutando: %s - %s ", proceso->pid, comando, parametros);
+    free(parametros);
+    if (!strcmp(comando, "WRITE"))
     {
 
-        struct pcb *proceso_usado = encontrar_proceso_especifico(lista_bloqued, pid);
-        if (proceso_usado != NULL)
+        int direccion_logica = atoi(list_get(instruccion_separada, 1));
+        int numero_pagina = direccion_logica / tam_pagina;
+        int desplazamiento = direccion_logica % tam_pagina;
+        int longitud = string_length(list_get(instruccion_separada, 2));
+
+        // Primero vemos si esa pagina esta en cache
+
+        if (frames_cargados > 0 && esta_en_cache(cache, numero_pagina, proceso))
         {
-            log_trace(log_kernel, "%d - Pasa del estado Bloqueado al Estado Exit", pid);
-            sem_wait(&semaforo_bloqued);
-            list_remove_element(lista_bloqued->elements, proceso_usado);
-            sem_post(&semaforo_bloqued);
-            temporal_stop(proceso_usado->tiempo_estado);
 
-            proceso_usado->MT[3] += temporal_gettime(proceso_usado->tiempo_estado);
-
-            cambio_estado_exit(proceso_usado);
+            escribir_cache(cache, numero_pagina, list_get(instruccion_separada, 2), desplazamiento, longitud);
+            proceso->pc = proceso->pc + 1;
         }
         else
         {
 
-            struct pcb *proceso_usado = encontrar_proceso_especifico(lista_sus_bloqued, pid);
-
-            if (!proceso_usado)
-                abort();
-
-            sem_wait(&semaforo_bloqued_sus);
-            list_remove_element(lista_sus_bloqued->elements, proceso_usado);
-            sem_post(&semaforo_bloqued_sus);
-
-            temporal_stop(proceso_usado->tiempo_estado);
-            proceso_usado->MT[4] += temporal_gettime(proceso_usado->tiempo_estado);
-            temporal_destroy(proceso_usado->tiempo_estado);
-            proceso_usado->tiempo_estado = temporal_create();
-            log_trace(log_kernel, "%d - Pasa del estado Suspendido Bloqueado al Estado Exit", proceso_usado->PID);
-
-            cambio_estado_exit(proceso_usado);
-        }
-    }
-
-    else
-    {
-        struct pcb *proceso_usado = encontrar_proceso_especifico(lista_bloqued, pid);
-
-        if (proceso_usado != NULL)
-        {
-            sem_wait(&semaforo_bloqued);
-            list_remove_element(lista_bloqued->elements, proceso_usado);
-            sem_post(&semaforo_bloqued);
-            temporal_stop(proceso_usado->tiempo_estado);
-
-            proceso_usado->MT[3] += temporal_gettime(proceso_usado->tiempo_estado);
-            log_trace(log_kernel, "%d - Pasa del estado Bloqueado al Estado Ready", pid);
-            proceso_usado->ME[1] += 1;
-            cambio_estado_ready(proceso_usado);
-        }
-        else
-        {
-            sem_wait(&semaforo_bloqued_sus);
-            struct pcb *proceso_usado = encontrar_proceso_especifico(lista_sus_bloqued, pid);
-            if (!proceso_usado)
-                abort();
-            list_remove_element(lista_sus_bloqued->elements, proceso_usado);
-
-            sem_wait(&semaforo_ready_sus);
-            queue_push(lista_sus_ready, proceso_usado);
-            sem_post(&semaforo_ready_sus);
-
-            sem_post(&semaforo_bloqued_sus);
-
-            proceso_usado->ME[5] += 1;
-            temporal_stop(proceso_usado->tiempo_estado);
-            proceso_usado->MT[3] += temporal_gettime(proceso_usado->tiempo_estado);
-            temporal_destroy(proceso_usado->tiempo_estado);
-            proceso_usado->tiempo_estado = temporal_create();
-            sem_post(&procesos_creados);
-            log_trace(log_kernel, "%d - Pasa del estado Suspendido Bloqueado al Estado Suspended Ready", proceso_usado->PID);
-        }
-    }
-}
-
-void *syscall_io(void *peticion)
-{
-    struct peticion_io *peticion_nueva = (struct peticion_io *)peticion;
-
-    sem_wait(&semaforo_io);
-    queue_push((peticion_nueva->io_asociada->espera), peticion_nueva);
-    sem_post(&semaforo_io);
-
-    sem_post(&(peticion_nueva->io_asociada->usando_io));
-
-    return NULL;
-}
-
-void *encontrar_proceso_pequeño(void *elemento, void *elemento2)
-{
-    struct pcb *proceso1 = (struct pcb *)elemento;
-    struct pcb *proceso2 = (struct pcb *)elemento2;
-    return proceso1->tamanio < proceso2->tamanio ? proceso1 : proceso2;
-}
-
-struct io *encontrar_io_especifico(t_list *lista, char *nombre)
-{
-    bool encontrar_io(void *elemento)
-    {
-        struct io *dispositivo = (struct io *)elemento;
-        return strcmp(dispositivo->nombre, nombre) == 0;
-    }
-    sem_wait(&semaforo_io);
-    struct io *dispositivo = list_find(lista, encontrar_io);
-    sem_post(&semaforo_io);
-    return dispositivo;
-}
-
-void planificador_io(struct io *io_asociada)
-{
-    while (1)
-    {
-        sem_wait(&(io_asociada->usando_io));
-        sem_wait(&semaforo_io);
-        struct peticion_io *peticion = (struct peticion_io *)queue_pop(io_asociada->espera);
-        sem_post(&semaforo_io);
-        t_paquete *paquete_io = crear_paquete(); // TODO Liberar
-        int *puntero_pid = malloc(sizeof(int));
-        *puntero_pid = peticion->pid;
-
-        agregar_a_paquete(paquete_io, (void *)puntero_pid, sizeof(int));
-        agregar_a_paquete(paquete_io, &peticion->tiempo, sizeof(int));
-        if (enviar_paquete(paquete_io, peticion->io_asociada->socket_io))
-        {
-            free(puntero_pid);
-            recibir_mensaje(peticion->io_asociada->socket_io);
-
-            log_trace(log_kernel, "%d - Finalizo IO y pasa a READY", peticion->pid);
-
-            sem_wait(&semaforo_bloqued);
-            struct pcb *proceso = encontrar_proceso_especifico(lista_bloqued, peticion->pid);
-            if (proceso)
-            {
-                list_remove_element(lista_bloqued->elements, proceso);
-                sem_post(&semaforo_bloqued);
-
-                proceso->ME[1] += 1;
-                temporal_stop(proceso->tiempo_estado);
-                proceso->MT[3] += temporal_gettime(proceso->tiempo_estado);
-                temporal_destroy(proceso->tiempo_estado);
-                proceso->tiempo_estado = temporal_create();
-
-                log_trace(log_kernel, "%d - Pasa del estado Bloqueado al Estado Ready", proceso->PID);
-                cambio_estado_ready(proceso);
-            }
-            else
-            {
-                sem_post(&semaforo_bloqued);
-                sem_wait(&semaforo_bloqued_sus);
-                proceso = encontrar_proceso_especifico(lista_sus_bloqued, peticion->pid);
-                if (!proceso)
-                {
-                    proceso = list_get(lista_bloqued->elements, 0);
-                    abort();
-                }
-                list_remove_element(lista_sus_bloqued->elements, proceso);
-
-                sem_wait(&semaforo_ready_sus);
-                queue_push(lista_sus_ready, proceso);
-                sem_post(&semaforo_ready_sus);
-
-                sem_post(&semaforo_bloqued_sus);
-
-                proceso->ME[5] += 1;
-                temporal_stop(proceso->tiempo_estado);
-                proceso->MT[3] += temporal_gettime(proceso->tiempo_estado);
-                temporal_destroy(proceso->tiempo_estado);
-                proceso->tiempo_estado = temporal_create();
-                sem_post(&procesos_creados);
-                log_trace(log_kernel, "%d - Pasa del estado Suspendido Bloqueado al Estado Suspended Ready", proceso->PID);
-            }
-
-            free(peticion);
-            peticion = NULL;
-        }
-        else
-        {
-            sem_wait(&semaforo_io);
-            list_remove_element(lista_io, peticion->io_asociada);
-            sem_post(&semaforo_io);
-
-            struct io *io_segunda = encontrar_io_especifico(lista_io, io_asociada->nombre);
-
-            struct pcb *proceso = encontrar_proceso_especifico(lista_bloqued, peticion->pid);
-            if (io_segunda)
-            {
-                if (proceso != NULL)
-                {
-                    sem_wait(&semaforo_bloqued);
-                    list_remove_element(lista_bloqued->elements, proceso);
-                    sem_post(&semaforo_bloqued);
-                    temporal_stop(proceso->tiempo_estado);
-
-                    proceso->MT[3] += temporal_gettime(proceso->tiempo_estado);
-                    temporal_destroy(proceso->tiempo_estado);
-
-                    proceso->tiempo_estado = temporal_create();
-                }
-                else
-                {
-                    sem_wait(&semaforo_bloqued_sus);
-                    proceso = encontrar_proceso_especifico(lista_sus_bloqued, peticion->pid);
-                    list_remove_element(lista_sus_bloqued->elements, proceso);
-                    sem_post(&semaforo_bloqued_sus);
-                    temporal_stop(proceso->tiempo_estado);
-
-                    proceso->MT[4] += temporal_gettime(proceso->tiempo_estado);
-                    temporal_destroy(proceso->tiempo_estado);
-
-                    proceso->tiempo_estado = temporal_create();
-                }
-                cambio_estado_exit(proceso);
-            }
-            else
-            {
-                if (proceso != NULL)
-                {
-
-                    sem_wait(&semaforo_bloqued);
-                    list_remove_element(lista_bloqued->elements, proceso);
-                    sem_post(&semaforo_bloqued);
-                    temporal_stop(proceso->tiempo_estado);
-
-                    proceso->MT[3] += temporal_gettime(proceso->tiempo_estado);
-                    proceso->tiempo_estado = temporal_create();
-                }
-                else
-                {
-                    sem_wait(&semaforo_bloqued_sus);
-                    proceso = encontrar_proceso_especifico(lista_sus_bloqued, peticion->pid);
-
-                    list_remove_element(lista_sus_bloqued->elements, proceso);
-                    sem_post(&semaforo_bloqued_sus);
-                    temporal_stop(proceso->tiempo_estado);
-
-                    proceso->MT[4] += temporal_gettime(proceso->tiempo_estado);
-                    proceso->tiempo_estado = temporal_create();
-                }
-                cambio_estado_exit(proceso);
-                sem_wait(&semaforo_io);
-                while (!queue_is_empty(io_asociada->espera))
-                {
-                    struct pcb *proceso_remover = queue_pop(io_asociada->espera);
-                    struct pcb *proceso_a_terminar = encontrar_proceso_especifico(lista_bloqued, proceso_remover->PID);
-                    if (proceso_a_terminar)
-                    {
-                        sem_wait(&semaforo_bloqued);
-                        list_remove_element(lista_bloqued->elements, proceso_a_terminar);
-                        sem_post(&semaforo_bloqued);
-                        temporal_stop(proceso_a_terminar->tiempo_estado);
-
-                        proceso_a_terminar->MT[3] += temporal_gettime(proceso_a_terminar->tiempo_estado);
-                        temporal_destroy(proceso_a_terminar->tiempo_estado);
-                        proceso_a_terminar->tiempo_estado = temporal_create();
-                    }
-                    else
-                    {
-                        proceso_a_terminar = encontrar_proceso_especifico(lista_sus_bloqued, proceso_remover->PID);
-
-                        sem_wait(&semaforo_bloqued_sus);
-                        list_remove_element(lista_sus_bloqued->elements, proceso_a_terminar);
-                        sem_post(&semaforo_bloqued_sus);
-                        temporal_stop(proceso_a_terminar->tiempo_estado);
-
-                        proceso_a_terminar->MT[4] += temporal_gettime(proceso_a_terminar->tiempo_estado);
-                        temporal_destroy(proceso_a_terminar->tiempo_estado);
-                        proceso_a_terminar->tiempo_estado = temporal_create();
-                    }
-
-                    cambio_estado_exit(proceso_a_terminar);
-
-                    list_remove_element(io_asociada->espera->elements, proceso);
-                }
-                sem_post(&semaforo_io);
-            }
-        }
-        eliminar_paquete(paquete_io);
-    }
-}
-
-void *escuchar_io()
-{
-    char *puerto_escucha_io = config_get_string_value(config_kernel, "PUERTO_ESCUCHA_IO");
-    int socket_io = iniciar_modulo(puerto_escucha_io);
-    while (1)
-    {
-        int socket_conectado_io = establecer_conexion(socket_io);
-        if (socket_conectado_io < 0)
-            abort();
-
-        // Handshake
-        char *nombre = recibir_mensaje(socket_conectado_io);
-
-        char *mensaje = "me llego tu mensaje, un gusto io. Al infinito y más allá";
-
-        enviar_mensaje(mensaje, socket_conectado_io);
-
-        struct io *nueva_io;
-
-        nueva_io = malloc(sizeof(struct io));
-
-        nueva_io->socket_io = socket_conectado_io;
-        nueva_io->nombre = nombre;
-        struct io *existe = (struct io *)encontrar_io_especifico(lista_io, nombre);
-
-        if (existe) // MODIFICAR PARA QUE ESUCCHE 2 IO-
-        {
-            nueva_io->espera = existe->espera;
-            nueva_io->usando_io = existe->usando_io;
-            sem_post(&nueva_io->usando_io);
-        }
-        else
-        {
-            sem_init(&(nueva_io->usando_io), 1, 0);
-            nueva_io->espera = queue_create();
-
-            pthread_t io_especifica;
-            pthread_create(&io_especifica, NULL, (void *(*)(void *))planificador_io, (void *)nueva_io);
-            pthread_detach(io_especifica);
-        }
-
-        sem_wait(&semaforo_io);
-        list_add(lista_io, nueva_io);
-        sem_post(&semaforo_io);
-    }
-    return NULL;
-}
-
-void suspender_proceso(struct pcb *proceso)
-{
-
-    sem_wait(&semaforo_bloqued);
-    queue_pop(lista_bloqued);
-    sem_post(&semaforo_bloqued);
-
-    sem_wait(&semaforo_bloqued_sus);
-    queue_push(lista_sus_bloqued, proceso);
-    sem_post(&semaforo_bloqued_sus);
-
-    // Peticion a memoria para hacer el Swap out.
-    int conexion = peticion_memoria();
-    t_paquete *paquete_dump = crear_paquete();
-    int *puntero_pid = malloc(sizeof(int));
-    *puntero_pid = proceso->PID;
-
-    int codigo = SUSPENDER;
-
-    agregar_a_paquete(paquete_dump, &codigo, sizeof(int));
-
-    agregar_a_paquete(paquete_dump, (void *)puntero_pid, sizeof(int));
-    enviar_paquete(paquete_dump, conexion);
-    free(puntero_pid);
-    
-    recibir_mensaje(conexion);
-    
-    sem_post(&memoria_ocupada);
-
-
-    eliminar_paquete(paquete_dump);
-    return;
-}
-
-void *cronometrar_proceso(void *data)
-{
-    struct pcb *proceso = (struct pcb *)data;
-    int tiempo = (config_get_int_value(config_kernel, "TIEMPO_SUSPENSION") * 1000);
-
-    unsigned int cant_veces = proceso->ME[3];
-
-        log_trace(log_kernel, "%d - ENTRANDO A CRONOMETRO", proceso->PID);
-
-
-    usleep(tiempo);
-
-    sem_wait(&semaforo_bloqued);
-
-    if (encontrar_proceso_especifico(lista_bloqued, proceso->PID) && cant_veces == proceso->ME[3])
-    {
-        proceso->ME[4] += 1;
-        temporal_stop(proceso->tiempo_estado);
-        proceso->MT[3] += temporal_gettime(proceso->tiempo_estado);
-        proceso->tiempo_estado = temporal_create();
-        log_trace(log_kernel, "%d - Pasa del estado Bloqueado al Estado Bloqueado suspendido", proceso->PID);
-        sem_post(&semaforo_bloqued);
-        suspender_proceso(proceso);
-        return NULL;
-    }
-    else
-    {
-        sem_post(&semaforo_bloqued);
-
-        return NULL;
-    }
-}
-
-void *planicador_mediano_plazo(void *m)
-{
-    while (true)
-    {
-        sem_wait(&procesos_bloqueados);
-
-        struct pcb *proceso = malloc(sizeof(struct pcb));
-        sem_wait(&semaforo_bloqued);
-        if (queue_is_empty(lista_bloqued))
-            abort();
-        proceso = list_get(lista_bloqued->elements, queue_size(lista_bloqued) - 1);
-        sem_post(&semaforo_bloqued);
-
-        // hacer config;
-
-        pthread_t cronometro_bloqueado;
-        pthread_create(&cronometro_bloqueado, NULL, cronometrar_proceso, (void *)proceso);
-        pthread_detach(cronometro_bloqueado);
-    }
-}
-
-void actualizar_rafaga(struct pcb *proceso, int rafaga_real)
-{
-    double alfa = config_get_double_value(config_kernel, "ALFA");
-    sem_wait(&proceso->mutex_rafaga);
-    proceso->rafaga = (alfa * (double)rafaga_real + (1 - alfa) * proceso->rafaga);
-    sem_post(&proceso->mutex_rafaga);
-    return;
-}
-
-void cambio_estado_bloqued(struct pcb *proceso_a_bloquear)
-{
-
-    sem_wait(&semaforo_bloqued);
-    queue_push(lista_bloqued, proceso_a_bloquear);
-    sem_post(&semaforo_bloqued);
-
-    sem_post(&procesos_bloqueados);
-
-    return;
-}
-
-void *planifacion_largo_plazo(void *l)
-{
-    char *tipo_planificacion = config_get_string_value(config_kernel, "ALGORITMO_INGRESO_A_READY");
-    struct pcb *proceso = NULL;
-    while (true)
-    {
-        sem_wait(&procesos_creados);
-
-        sem_wait(&semaforo_ready_sus);
-        bool lista_sus_ready_vacia = queue_is_empty(lista_sus_ready);
-        sem_post(&semaforo_ready_sus);
-
-        sem_wait(&semaforo_new);
-        bool lista_new_vacia = queue_is_empty(lista_new);
-        sem_post(&semaforo_new);
-
-        if (strcmp(tipo_planificacion, "FIFO") == 0)
-        {
-            if (!lista_sus_ready_vacia)
-            {
-                sem_wait(&semaforo_ready_sus);
-                proceso = (struct pcb *)queue_peek(lista_sus_ready);
-
-                int conexion_memoria = peticion_memoria();
-
-                t_paquete *paquete_proceso = crear_paquete();
-
-                int *puntero_pid = malloc(sizeof(int));
-                *puntero_pid = proceso->PID;
-
-                int codigo = DESUSPENDER;
-                agregar_a_paquete(paquete_proceso, &codigo, sizeof(int));
-
-                agregar_a_paquete(paquete_proceso, (void *)puntero_pid, sizeof(int));
-                enviar_paquete(paquete_proceso, conexion_memoria);
-
-                char *rta = recibir_mensaje(conexion_memoria);
-                eliminar_paquete(paquete_proceso);
-
-                if (!strcmp(rta, "OK"))
-                {
-                    free(rta);
-                    proceso = (struct pcb *)queue_pop(lista_sus_ready);
-
-                    sem_post(&semaforo_ready_sus);
-
-                    log_trace(log_kernel, "%d - Pasa del estado Suspended Ready al Estado Ready", proceso->PID);
-                    proceso->ME[1] += 1;
-                    temporal_stop(proceso->tiempo_estado);
-                    proceso->MT[5] += temporal_gettime(proceso->tiempo_estado);
-                    temporal_destroy(proceso->tiempo_estado);
-                    proceso->tiempo_estado = temporal_create();
-
-                    cambio_estado_ready(proceso);
-                }
-                else
-                {
-                    free(rta);
-                    sem_post(&semaforo_ready_sus);
-                    sem_wait(&memoria_ocupada);
-                    sem_post(&procesos_creados);
-
-                }
-            }
-            else if (!lista_new_vacia)
-            {
-                sem_wait(&semaforo_new);
-                proceso = (struct pcb *)queue_peek(lista_new);
-
-                int tamanio = proceso->tamanio;
-                char *path_proceso = proceso->path;
-
-                int conexion_memoria = peticion_memoria();
-                t_paquete *paquete_proceso = crear_paquete();
-
-                int *puntero_pid = malloc(sizeof(int));
-                *puntero_pid = proceso->PID;
-
-                int codigo = PROCESO_NUEVO;
-                agregar_a_paquete(paquete_proceso, &codigo, sizeof(int));
-
-                agregar_a_paquete(paquete_proceso, (void *)puntero_pid, sizeof(int));
-
-                agregar_a_paquete(paquete_proceso, &tamanio, sizeof(int));
-                agregar_a_paquete(paquete_proceso, path_proceso, string_length(path_proceso) + 1);
-
-                enviar_paquete(paquete_proceso, conexion_memoria);
-
-                char *rta = recibir_mensaje(conexion_memoria);
-
-                eliminar_paquete(paquete_proceso);
-
-                if (!strcmp(rta, "OK"))
-                {
-                    free(rta);
-                    proceso = (struct pcb *)queue_pop(lista_new);
-
-                    sem_post(&semaforo_new);
-                    proceso->ME[1] += 1;
-                    temporal_stop(proceso->tiempo_estado);
-                    proceso->MT[0] += temporal_gettime(proceso->tiempo_estado);
-                    temporal_destroy(proceso->tiempo_estado);
-                    proceso->tiempo_estado = temporal_create();
-
-                    log_trace(log_kernel, "%d - Pasa del estado New al Estado Ready", proceso->PID);
-
-                    cambio_estado_ready(proceso);
-                }
-                else
-                {
-                    sem_post(&semaforo_new);
-                    sem_wait(&memoria_ocupada);
-                    sem_post(&procesos_creados);
-
-                }
-            }
-            else
-            {
-                abort();
-            }
-        }
-        else if (strcmp(tipo_planificacion, "PMCP") == 0)
-        {
-            bool pudo_incertar = false;
-            while (!pudo_incertar)
-            {
-                if (!lista_sus_ready_vacia)
-                {
-                    sem_wait(&semaforo_ready_sus);
-                    proceso = (struct pcb *)list_get_minimum(lista_sus_ready->elements, encontrar_proceso_pequeño);
-
-                    int conexion_memoria = peticion_memoria();
-
-                    t_paquete *paquete_proceso = crear_paquete();
-
-                    int *puntero_pid = malloc(sizeof(int));
-                    *puntero_pid = proceso->PID;
-
-                    int codigo = DESUSPENDER;
-                    agregar_a_paquete(paquete_proceso, &codigo, sizeof(int));
-
-                    agregar_a_paquete(paquete_proceso, (void *)puntero_pid, sizeof(int));
-                    enviar_paquete(paquete_proceso, conexion_memoria);
-
-                    char *rta = recibir_mensaje(conexion_memoria);
-                    eliminar_paquete(paquete_proceso);
-                    if (!strcmp(rta, "OK"))
-                    {
-                        list_remove_element(lista_sus_ready->elements, proceso);
-
-                        free(rta);
-                        sem_post(&semaforo_ready_sus);
-                        proceso->ME[1] += 1;
-                        temporal_stop(proceso->tiempo_estado);
-                        proceso->MT[5] += temporal_gettime(proceso->tiempo_estado);
-                        temporal_destroy(proceso->tiempo_estado);
-                        proceso->tiempo_estado = temporal_create();
-
-                        log_trace(log_kernel, "%d - Pasa del estado Suspended Ready al Estado Ready", proceso->PID);
-
-                        cambio_estado_ready(proceso);
-                        pudo_incertar = true;
-                    }
-                    else
-                    {
-                        free(rta);
-                        sem_post(&semaforo_ready_sus);
-
-                        sem_wait(&memoria_ocupada);
-                        sem_post(&procesos_creados);
-
-                    }
-                }
-
-                else if (!lista_new_vacia)
-                {
-                    sem_post(&semaforo_new);
-
-                    proceso = (struct pcb *)list_get_minimum(lista_new->elements, encontrar_proceso_pequeño);
-                    int tamnio_proceso = proceso->tamanio;
-                    char *path_proceso = proceso->path;
-                    int conexion_memoria = peticion_memoria();
-
-                    t_paquete *paquete_proceso = crear_paquete();
-
-                    int *puntero_pid = malloc(sizeof(int));
-                    *puntero_pid = proceso->PID;
-
-                    int codigo = PROCESO_NUEVO;
-                    agregar_a_paquete(paquete_proceso, &codigo, sizeof(int));
-
-                    agregar_a_paquete(paquete_proceso, (void *)puntero_pid, sizeof(int));
-
-                    agregar_a_paquete(paquete_proceso, &tamnio_proceso, sizeof(int));
-                    agregar_a_paquete(paquete_proceso, path_proceso, strlen(path_proceso) + 1);
-
-                    enviar_paquete(paquete_proceso, conexion_memoria);
-
-                    char *rta = recibir_mensaje(conexion_memoria);
-                    eliminar_paquete(paquete_proceso);
-                    if (!strcmp(rta, "OK"))
-                    {
-                        list_remove_element(lista_new->elements, proceso);
-
-                        free(rta);
-                        sem_post(&semaforo_new);
-                        proceso->ME[1] += 1;
-                        temporal_stop(proceso->tiempo_estado);
-                        proceso->MT[0] += temporal_gettime(proceso->tiempo_estado);
-                        temporal_destroy(proceso->tiempo_estado);
-                        proceso->tiempo_estado = temporal_create();
-
-                        log_trace(log_kernel, "%d - Pasa del estado New al Estado Ready", proceso->PID);
-
-                        cambio_estado_ready(proceso);
-                        pudo_incertar = true;
-                    }
-                    else
-                    {
-                        sem_post(&semaforo_ready);
-                        sem_wait(&memoria_ocupada);
-                        sem_post(&procesos_creados);
-
-                    }
-                }
-            }
-        }
-    }
-}
-
-
-void solicitud_exit(struct pcb *proceso_a_terminar)
-{
-    sem_wait(&semaforo_execute);
-    list_remove_element(lista_execute->elements, proceso_a_terminar);
-
-    temporal_stop(proceso_a_terminar->tiempo_estado);
-
-    proceso_a_terminar->MT[2] += temporal_gettime(proceso_a_terminar->tiempo_estado);
-    temporal_destroy(proceso_a_terminar->tiempo_estado);
-    sem_post(&semaforo_execute);
-
-    log_trace(log_kernel, "%d - Pasa del estado Execute al Estado Exit", proceso_a_terminar->PID);
-
-    cambio_estado_exit(proceso_a_terminar);
-}
-
-void solicitud_bloqueo(struct pcb *proceso_a_bloquear, t_temporal *rafaga_real_actual)
-{
-    temporal_stop(rafaga_real_actual);
-
-    int tiempo_real = temporal_gettime(rafaga_real_actual);
-
-    actualizar_rafaga(proceso_a_bloquear, tiempo_real);
-
-    log_trace(log_kernel, "%d - Pasa del estado Execute al Estado Bloquedo", proceso_a_bloquear->PID);
-
-    sem_wait(&semaforo_execute);
-    list_remove_element(lista_execute->elements, proceso_a_bloquear);
-    proceso_a_bloquear->ME[3] += 1;
-    temporal_stop(proceso_a_bloquear->tiempo_estado);
-    proceso_a_bloquear->MT[2] += temporal_gettime(proceso_a_bloquear->tiempo_estado);
-    temporal_destroy(proceso_a_bloquear->tiempo_estado);
-
-    proceso_a_bloquear->tiempo_estado = temporal_create();
-    sem_post(&semaforo_execute);
-
-    cambio_estado_bloqued(proceso_a_bloquear);
-}
-
-void operar_proceso(struct Cpu *cpu)
-{
-    bool termino = false;
-    t_temporal *rafaga_real_actual = temporal_create();
-    do
-    {
-        t_list *paquete_syscall = recibir_paquete(cpu->socket_dispatch);
-
-        int pid_proceso = *((int *)list_get(paquete_syscall, 1));
-        int pc_proceso = *((int *)list_get(paquete_syscall, 2));
-        int tipo = *((int *)list_get(paquete_syscall, 0));
-
-        switch (tipo)
-        {
-        case 5:
-
-            log_trace(log_kernel, "%d - solicitó syscall: Exit", pid_proceso);
-
-            // struct pcb *proceso_a_terminar = encontrar_proceso_especifico(lista_execute, pid_proceso_usado);
-
-            struct pcb *proceso_a_terminar = cpu->proceso;
-            proceso_a_terminar->PC = pc_proceso;
-
-            temporal_destroy(rafaga_real_actual);
-            solicitud_exit(proceso_a_terminar);
-
-            termino = true;
-            break;
-
-        case 1:
-            // INit
-            log_trace(log_kernel, "%d - solicitó syscall: Init Procc", pid_proceso);
-
-            syscall_init_procc((*(int *)list_get(paquete_syscall, 4)), list_get(paquete_syscall, 3));
-
-            enviar_mensaje("Creado", cpu->socket_dispatch);
-            break;
-
-        case 2:
-
-            log_trace(log_kernel, "%d - solicitó syscall: Dump Memory", pid_proceso);
-
-            struct pcb *proceso_a_bloquear = cpu->proceso;
-            proceso_a_bloquear->PC = pc_proceso;
-
-            solicitud_bloqueo(proceso_a_bloquear, rafaga_real_actual);
-        
-            temporal_destroy(rafaga_real_actual);
-           
-            pthread_t dump_proceso;
-            int *pid = malloc(sizeof(int));
-            *pid = pid_proceso;
-            pthread_create(&dump_proceso, NULL, (void *(*)(void *))syscall_dump_memory, (void *)pid);
-            pthread_detach(dump_proceso);
-            // dump
-            termino = true;
-            break;
-
-        case 3:
-            // IO
-
-            log_trace(log_kernel, "%d - solicitó syscall: IO", pid_proceso);
-
-            struct pcb *proceso_usado = cpu->proceso;
-
-            proceso_usado->PC= pc_proceso;
-
-            // Revisar si la IO solicitada existe, si existe, asociar
-            struct io *dispositivo_necesitado = encontrar_io_especifico(lista_io, (char *)list_get(paquete_syscall, 3));
-            if (!dispositivo_necesitado)
-            {
-                temporal_destroy(rafaga_real_actual);
-                solicitud_exit(proceso_usado);
-
-                termino = true;
-            }
-            else
-            {
-
-                struct peticion_io *peticion = malloc(sizeof(struct peticion_io));
-                log_trace(log_kernel, "%d - Bloqueado por IO: %s", pid_proceso, dispositivo_necesitado->nombre);
-
-                peticion->tiempo = *((int *)list_get(paquete_syscall, 4));
-                peticion->io_asociada = dispositivo_necesitado;
-                peticion->pid = pid_proceso;
-
-                solicitud_bloqueo(proceso_usado, rafaga_real_actual);
-                temporal_destroy(rafaga_real_actual);
-
-                pthread_t sys_io;
-                pthread_create(&sys_io, NULL, (void *(*)(void *))syscall_io, (void *)peticion);
-                pthread_detach(sys_io);
-            }
-
-            termino = true;
-            break;
-
-        case 4:
-
-            cpu->proceso->PC = pc_proceso;
+            // traducir y escribir
+            int dir_fisica = traducir_direccion(direccion_logica, proceso, tlb);
             
-            cambio_estado_ready(cpu->proceso);
+            int tipo = 2;
+            int *puntero_pid = malloc(sizeof(int));
+            *puntero_pid = proceso->pid;
+            int *direccion = malloc(sizeof(int));
+            *direccion = dir_fisica;
+            char *dato = list_get(instruccion_separada, 2);
+            int longitud = string_length(dato);
+            longitud++;
+            t_paquete *paquete = crear_paquete();
+            agregar_a_paquete(paquete, &tipo, sizeof(int));
+            agregar_a_paquete(paquete, (void *)puntero_pid,sizeof(int));
 
-            sem_wait(&semaforo_execute);
-            list_remove_element(lista_execute->elements, cpu->proceso);
+            agregar_a_paquete(paquete, (void *)direccion, sizeof(int));            
+            agregar_a_paquete(paquete, &longitud, sizeof(int));
+            agregar_a_paquete(paquete, dato, longitud * sizeof(char));
+            enviar_paquete(paquete, conexion_memoria);
+            eliminar_paquete(paquete);
+            char* chivo =recibir_mensaje(conexion_memoria); // Recibo el OK de memoria
+            //strcat(chivo,"\0");
+            if(strcmp(chivo,"OK")){
+                log_info(log_cpu,"no se escribio en memoria");
+                abort();
+            }
+            log_info(log_cpu, "PID: %d - Acción: ESCRIBIR - Dirección Física: %d - Valor: %s", proceso->pid, dir_fisica, dato);
+            proceso->pc = proceso->pc + 1;
 
-            temporal_stop(cpu->proceso->tiempo_estado);
+            // actualizar cache
+            if (entradas_cache > 0)
+            {
+                Pagina *pagina_cache = malloc(sizeof(Pagina));
+                pagina_cache->modificado = 0;
+                pagina_cache->referencia_bit = 1;
+                memoriainfo *pagina = malloc(sizeof(memoriainfo));
+                pagina->tipo = 3; // LEER
+                pagina->pid = proceso->pid;
+                pagina->direccion = dir_fisica - desplazamiento;
+                t_paquete *paquete_pagina = crear_paquete();
+                agregar_a_paquete(paquete_pagina, &pagina->tipo, sizeof(int));
+                agregar_a_paquete(paquete_pagina, &pagina->pid, sizeof(int));
+                agregar_a_paquete(paquete_pagina, &pagina->direccion, sizeof(int));
+                enviar_paquete(paquete_pagina, conexion_memoria);
+                char *contenido = recibir_mensaje(conexion_memoria);
+                pagina_cache->numero_pagina = numero_pagina;
+                pagina_cache->contenido = contenido;
+                actualizar_cache(cache, pagina_cache, proceso, tlb);
+                eliminar_paquete(paquete_pagina);
+                free(pagina_cache);
+                free(pagina);
+            }
 
-            cpu->proceso->MT[2] += temporal_gettime(cpu->proceso->tiempo_estado);
-            temporal_destroy(cpu->proceso->tiempo_estado);
-            cpu->proceso->tiempo_estado = temporal_create();
-
-
-            sem_post(&semaforo_execute);
-
-            log_trace(log_kernel, "%d - Pasa del estado Execute al Estado Ready", pid_proceso);
-
-
-            termino = true;
-
-            break;
+            // actualizar TLB
+            if (entradas_tlb > 0)
+            {
+                int marco = (dir_fisica - desplazamiento) / tam_pagina;
+                actualizar_tlb(tlb, numero_pagina, marco);
+            }
         }
-    } while (termino != true);
-    return;
-}
-
-void cambio_estado_execute(struct Cpu *cpu, struct pcb *proceso)
-{
-    cpu->proceso = proceso;
-
-    queue_push(lista_execute, proceso);
-    proceso->ME[2] += 1;
-    temporal_stop(proceso->tiempo_estado);
-    proceso->MT[1] = temporal_gettime(proceso->tiempo_estado);
-
-    temporal_destroy(proceso->tiempo_estado);
-
-    proceso->tiempo_estado = temporal_create();
-
-    log_trace(log_kernel, "%d - Pasa del estado Ready al Estado Execute", proceso->PID);
-    
-    // Envia a CPU
-    t_paquete *proceso_a_ejecutar = crear_paquete();
-
-    agregar_a_paquete(proceso_a_ejecutar, &cpu->proceso->PID, sizeof(int));
-    agregar_a_paquete(proceso_a_ejecutar, &cpu->proceso->PC, sizeof(int));
-    
-
-    enviar_paquete(proceso_a_ejecutar, cpu->socket_dispatch);
-    sem_wait(&semaforo_cpu);
-    
-    cpu->proceso = proceso;
-    sem_post(&semaforo_cpu);
-    
-    return;
-}
-
-
-
-struct pcb *tomar_proceso(struct Cpu *cpu)
-{
-    char *tipo_planificacion = config_get_string_value(config_kernel, "ALGORITMO_CORTO_PLAZO");
-    struct pcb *proceso;
-
-    // Lo toma
-    if (strcmp(tipo_planificacion, "FIFO") == 0)
-    {
-        sem_wait(&semaforo_ready);
-        proceso = queue_pop(lista_ready);
-        sem_post(&semaforo_ready);
-
-        return proceso;
     }
-
-    else if (strcmp(tipo_planificacion, "SJF") == 0 || (strcmp(tipo_planificacion, "SRT") == 0))
+    else if (!strcmp(comando, "READ"))
     {
 
-        sem_wait(&semaforo_ready);
-        proceso = list_get_minimum(lista_ready->elements, comparar_rafaga);
-        list_remove_element(lista_ready->elements, proceso);
-        sem_post(&semaforo_ready);
-        
-        return proceso;
-        
+        int direccion_logica = atoi(list_get(instruccion_separada, 1));
+        int numero_pagina = direccion_logica / tam_pagina;
+        int desplazamiento = direccion_logica % tam_pagina;
+        int longitud = atoi(list_get(instruccion_separada, 2));
+
+        if (frames_cargados > 0 && esta_en_cache(cache, numero_pagina, proceso))
+        {
+
+            char *leido = leer_cache(cache, numero_pagina, desplazamiento, longitud);
+            log_info(log_cpu, "%s", leido);
+            free(leido);
+            proceso->pc = proceso->pc + 1;
+        }
+        else
+        {
+
+            // traducir y leer
+            int dir_fisica = traducir_direccion(direccion_logica, proceso, tlb);
+            memoriainfo *read;
+            read = malloc(sizeof(memoriainfo));
+            read->tipo = 1;
+            read->pid = proceso->pid;
+            read->direccion = dir_fisica;
+            int tamanio = atoi(list_get(instruccion_separada, 2));
+            t_paquete *paquete = crear_paquete();
+            
+            agregar_a_paquete(paquete, &read->tipo, sizeof(int));
+            agregar_a_paquete(paquete, &read->pid, sizeof(int));
+            agregar_a_paquete(paquete, &dir_fisica, sizeof(int));
+            agregar_a_paquete(paquete, &tamanio, sizeof(int));
+            enviar_paquete(paquete, conexion_memoria);
+            free(read);
+            eliminar_paquete(paquete);
+            char *leido = recibir_mensaje(conexion_memoria);
+            log_info(log_cpu, "PID: %d - Acción: LEER - Dirección Física: %d - Valor: %s", proceso->pid, dir_fisica, leido);
+            proceso->pc = proceso->pc + 1;
+
+            // actualizar cache
+            if (entradas_cache > 0)
+            {
+                Pagina *pagina_cache = malloc(sizeof(Pagina));
+                pagina_cache->modificado = 0;
+                pagina_cache->referencia_bit = 1;
+                memoriainfo *pagina = malloc(sizeof(memoriainfo));
+                pagina->tipo = 3;
+                pagina->pid = proceso->pid;
+                pagina->direccion = dir_fisica - desplazamiento;
+                t_paquete *paquete_pagina = crear_paquete();
+                agregar_a_paquete(paquete_pagina, &pagina->tipo, sizeof(int));
+                agregar_a_paquete(paquete_pagina, &pagina->pid, sizeof(int));
+                agregar_a_paquete(paquete_pagina, &pagina->direccion, sizeof(int));
+                enviar_paquete(paquete_pagina, conexion_memoria);
+                char *contenido = recibir_mensaje(conexion_memoria);
+                pagina_cache->numero_pagina = numero_pagina;
+                pagina_cache->contenido = contenido;
+                actualizar_cache(cache, pagina_cache, proceso, tlb);
+                eliminar_paquete(paquete_pagina);
+                free(pagina_cache);
+                free(pagina);
+            }
+
+            // actualizar TLB
+            if (entradas_tlb > 0)
+            {
+                int marco = (dir_fisica - desplazamiento) / tam_pagina;
+                actualizar_tlb(tlb, numero_pagina, marco);
+            }
+        }
+    }
+    else if (!strcmp(comando, "GOTO"))
+    {
+        proceso->pc = atoi(list_get(instruccion_separada, 1));
+    }
+    else if (!strcmp(comando, "IO"))
+    {
+        cpuinfo *io;
+        io = malloc(sizeof(cpuinfo));
+        proceso->tipo = 3;
+        io->tipo = 3;
+        io->pid = proceso->pid;
+        io->pc = proceso->pc + 1;
+        char *dispositivo = list_get(instruccion_separada, 1);
+        int longitud = string_length(dispositivo);
+        int time = atoi(list_get(instruccion_separada, 2));
+        t_paquete *paquete = crear_paquete();
+
+        agregar_a_paquete(paquete, &io->tipo, sizeof(int));
+        agregar_a_paquete(paquete, &io->pid, sizeof(int));
+        agregar_a_paquete(paquete, &io->pc, sizeof(int));
+
+        agregar_a_paquete(paquete, dispositivo, (longitud + 1) * sizeof(char));
+        agregar_a_paquete(paquete, &time, sizeof(int));
+        enviar_paquete(paquete, conexion_kernel_dispatch);
+        eliminar_paquete(paquete);
+        free(io);
+        proceso->pc = proceso->pc + 1;
+        *interrupcion = true;
+    }
+    else if (!strcmp(comando, "INIT_PROC"))
+    {
+        cpuinfo *init;
+        init = malloc(sizeof(cpuinfo));
+        proceso->tipo = 1;
+        init->tipo = 1;
+        init->pid = proceso->pid;
+        init->pc = proceso->pc + 1;
+        char *archivo = list_get(instruccion_separada, 1);
+        int longitud = string_length(archivo);
+        int tamanio = atoi(list_get(instruccion_separada, 2));
+        t_paquete *paquete = crear_paquete();
+        agregar_a_paquete(paquete, &init->tipo, sizeof(int));
+        agregar_a_paquete(paquete, &init->pid, sizeof(int));
+        agregar_a_paquete(paquete, &init->pc, sizeof(int));
+
+        agregar_a_paquete(paquete, archivo, (longitud + 1) * sizeof(char));
+        agregar_a_paquete(paquete, &tamanio, sizeof(int));
+        enviar_paquete(paquete, conexion_kernel_dispatch);
+        eliminar_paquete(paquete);
+        recibir_mensaje(conexion_kernel_dispatch);
+        free(init);
+        proceso->pc = proceso->pc + 1;
+    }
+    else if (!strcmp(comando, "DUMP_MEMORY"))
+    {
+        cpuinfo *dump;
+        dump = malloc(sizeof(cpuinfo));
+        proceso->tipo = 2;
+        dump->tipo = 2;
+        dump->pid = proceso->pid;
+        dump->pc = proceso->pc + 1;
+        t_paquete *paquete = crear_paquete();
+        agregar_a_paquete(paquete, &dump->tipo, sizeof(int));
+        agregar_a_paquete(paquete, &dump->pid, sizeof(int));
+        agregar_a_paquete(paquete, &dump->pc, sizeof(int));
+        enviar_paquete(paquete, conexion_kernel_dispatch);
+        eliminar_paquete(paquete);
+        free(dump);
+        proceso->pc = proceso->pc + 1;
+        *interrupcion = true;
+    }
+    else if (!strcmp(comando, "EXIT"))
+    {
+        cpuinfo *exit;
+        exit = malloc(sizeof(cpuinfo));
+        proceso->tipo = 5;
+        exit->tipo = 5;
+        exit->pid = proceso->pid;
+        exit->pc = proceso->pc;
+        t_paquete *paquete = crear_paquete();
+        agregar_a_paquete(paquete, &exit->tipo, sizeof(int));
+        agregar_a_paquete(paquete, &exit->pid, sizeof(int));
+        agregar_a_paquete(paquete, &exit->pc, sizeof(int));
+        enviar_paquete(paquete, conexion_kernel_dispatch);
+        eliminar_paquete(paquete);
+        free(exit);
+        *interrupcion = true;
+    }
+    else if (!strcmp(comando, "NOOP"))
+    {
+        proceso->pc++;
+        log_info(log_cpu, "NOOP subiendo?: %d", proceso->pc);
     }
     else
     {
-        abort();
+        log_info(log_cpu, "Instruccion desconocida: %s", comando);
+        for (int i=0; i<strlen(comando); i++) log_trace(log_cpu, "ASCII: %c", comando[i]);
     }
-    return NULL;
-}
 
-
-// 1. Reviso si hay una cpu libre
-// 2. B
-
-
-void *planificador_cpu(void *cpu)
-{
-    struct Cpu *cpu_especifica = (struct Cpu *)cpu;
-
-    while (true)
-    {
-        sem_wait(&procesos_listos); // Este no bloquea a nadie más que a sí mismo
-
-        struct pcb *pcb = tomar_proceso(cpu_especifica);
-
-        sem_wait(&semaforo_cpu);
-        cambio_estado_execute(cpu, pcb); // Marca como en ejecución
-        sem_post(&semaforo_cpu);
-
-        operar_proceso(cpu_especifica);
-
-        sem_wait(&semaforo_cpu);
-        cpu_especifica->proceso = NULL;
-        sem_post(&semaforo_cpu);
-    }
-}
-
-    // While true
-    //      Wait procesos listos
-    //          tomar_proceso(); --> Busca un proceso en ready (copiar-pegar y adaptar) y lo pone en execute (cambiar_proceso_execute())
-    //          esperar();
-
-void *escuchar_cpu()
-{
-    char *puerto_escucha_dispatch = config_get_string_value(config_kernel, "PUERTO_ESCUCHA_DISPATCH");
-    int socket_dispatch_listen = iniciar_modulo(puerto_escucha_dispatch);
-    char *puerto_escucha_interrupt = config_get_string_value(config_kernel, "PUERTO_ESCUCHA_INTERRUPT");
-    int socket_interrupt = iniciar_modulo(puerto_escucha_interrupt);
-
-    while (1)
-    {
-        int socket_conectado_dispatch = establecer_conexion(socket_dispatch_listen);
-        int socket_conectado_interrupt = establecer_conexion(socket_interrupt);
-
-        // Handshake
-        char *id = recibir_mensaje(socket_conectado_dispatch);
-        char *mensaje = "me llego tu mensaje, un gusto cpu.";
-
-        enviar_mensaje(mensaje, socket_conectado_dispatch);
-        // Handshake Terminado
-        sem_post(&semaforo_cpu);
-        struct Cpu *nueva_cpu;
-
-        nueva_cpu = malloc(sizeof(struct Cpu));
-
-        nueva_cpu->socket_dispatch = socket_conectado_dispatch;
-        nueva_cpu->socket_interrupt = socket_conectado_interrupt;
-
-        nueva_cpu->id = id;
-        nueva_cpu->proceso = NULL;
-
-        list_add(lista_cpu, nueva_cpu);
-        sem_post(&semaforo_cpu);
-
-        pthread_t cpu_especifica;
-        pthread_create(&cpu_especifica, NULL, (void *(*)(void *))planificador_cpu, (void *)nueva_cpu);
-        pthread_detach(cpu_especifica);
-
-
-    }
-    return NULL;
+    return;
 }
 
 int main(int argc, char *argv[])
 {
-    // Procesos
-    lista_new = queue_create();
-    lista_ready = queue_create();
-    lista_sus_ready = queue_create();
-    lista_execute = queue_create();
-    lista_bloqued = queue_create();
-    lista_sus_bloqued = queue_create();
-    lista_finished = queue_create();
+//  //  if (argc < 3)
+//  /  {
+//        return 1;
+    ////}
 
-    // Listas de Modulos
-    lista_cpu = list_create();
-    lista_io = list_create();
+    char *nombre_log_cpu = malloc(sizeof(char) * 9);
+    strcpy(nombre_log_cpu, "cpu");
+    strcat(nombre_log_cpu, "1");
+    strcat(nombre_log_cpu, ".log");
 
-    // Inicalización de semaforos
-    sem_init(&semaforo_ready, 1, 1);
-    sem_init(&semaforo_bloqued, 1, 1);
-    sem_init(&semaforo_bloqued_sus, 1, 1);
-    sem_init(&semaforo_execute, 1, 1);
-    sem_init(&semaforo_new, 1, 1);
-    sem_init(&semaforo_ready_sus, 1, 1);
-    sem_init(&semaforo_cpu, 1, 1);
-    sem_init(&semaforo_io, 1, 1);
+    log_cpu = log_create(nombre_log_cpu, "cpu", true, LOG_LEVEL_INFO);
 
-    sem_init(&procesos_creados, 1, 0);
+    char *path_config = "/home/utnso/Desktop/tp-2025-1c-RompeComputadoras/cpu/cpu.conf";
+//argv[1]
+    iniciar_config(path_config);
 
-    sem_init(&procesos_bloqueados, 1, 0);
+    // enviar cpu_id al kernel
+    char *id = "0";
+    //argv[2];
+    enviar_mensaje(id, conexion_kernel_dispatch);
 
-    sem_init(&cpu_disponibles, 1, 0);
-    sem_init(&proceso_desalojado, 1, 0);
-    sem_init(&memoria_ocupada, 0, 1);
-    sem_init(&procesos_listos, 1, 0);
+    recibir_mensaje(conexion_kernel_dispatch);
 
-    // Kernel "Core" 10/10 Joke
-    config_kernel = iniciar_config("/home/utnso/tp-2025-1c-RompeComputadoras/kernel/kernel.conf");
+    // enviar cpu_id a memoria;
+    // enviar_mensaje(argv[2], conexion_memoria);
 
-    log_kernel = log_create("kernel.log", "kernel", true, LOG_LEVEL_TRACE);
-    contador_procesos = 0;
+    t_list *paquete_memoria = recibir_paquete(conexion_memoria);
+    tam_pagina = *(int *)list_get(paquete_memoria, 0);
+    niveles_tabla = *(int *)list_get(paquete_memoria, 1);
+    entradas_por_tabla = *(int *)list_get(paquete_memoria, 2);
+    list_destroy_and_destroy_elements(paquete_memoria, free);
 
-    char *nombreArchivo = "PLANI_LYM_PLAZO";
-    int tamanioProceso = 0;
+    TLBEntrada *tlb;
 
-    pthread_t servidor_cpu;
-    pthread_create(&servidor_cpu, NULL, escuchar_cpu, NULL);
-    pthread_detach(servidor_cpu);
-
-    pthread_t servidor_io;
-    pthread_create(&servidor_io, NULL, escuchar_io, NULL);
-    pthread_detach(servidor_io);
-
-    pthread_t planificador_largo;
-    pthread_create(&planificador_largo, NULL, planifacion_largo_plazo, NULL);
-    pthread_detach(planificador_largo);
-
-/*
-    pthread_t planificador_corto;
-    pthread_create(&planificador_corto, NULL, planificacion_corto_plazo, NULL);
-    pthread_detach(planificador_corto);
-*/
-    pthread_t planificador_mediano;
-    pthread_create(&planificador_mediano, NULL, planicador_mediano_plazo, NULL);
-    pthread_detach(planificador_mediano);
-
-    /*
-    if (argc < 4)
+    if (entradas_tlb > 0)
     {
-        log_trace(log_kernel, "Error, Parametros Invalidos");
-        return 1;
+        tlb = malloc(sizeof(TLBEntrada) * entradas_tlb);
     }
-    nombreArchivo = argv[2];
 
+    Pagina *cache;
 
-    tamanioProceso = atoi(argv[3]);
-    */
-    log_info(log_kernel, "\n               ___\n             _//_\\\\\n           ,\"    //\".\n          /          \\\n        _/           |\n       (.-,--.       |\n       /o/  o \\     /\n       \\_\\    /  /\\/\\\n       (__`--'   ._)\n       /  `-.     |\n      (     ,`-.  |\n       `-,--\\_  ) |-.\n        _`.__.'  ,-' \\\n       |\\ )  _.-'    |\n       i-\\.'\\     ,--+.\n     .' .'   \\,-'/     \\\n    / /         /       \\\n    7_|         |       |\n    |/          \"i.___.j\"\n    /            |     |\\\n   /             |     | \\\n  /              |     |  |\n  |              |     |  |\n  |____          |     |-i'\n   |   \"\"\"\"----\"\"|     | |\n   \\           ,-'     |/\n    `.         `-,     |\n     |`-._      / /| |\\ \\\n     |    `-.   `' | ||`-'\n     |      |      `-'|\n     |      |         |\n     |      |         |\n     |      |         |\n     |      |         |\n     |      |         |\n     |      |         |\n     )`-.___|         |\n   .'`-.____)`-.___.-'(\n .'        .'-._____.-i\n/        .'           |h\n`-------/         .   |j\n        `--------' \"--'w\n ");
+    if (entradas_cache > 0)
+    {
+        cache = malloc(sizeof(Pagina) * entradas_cache);
+        for (int i = 0; i < entradas_cache; i++)
+        {
+            cache[i].contenido = malloc(sizeof(char) * tam_pagina);
+        }
+    }
 
-    getchar();
-    syscall_init_procc(tamanioProceso, nombreArchivo);
+    t_list *proceso;
+    char *instruccion;
+    bool interrupcion;
+    sem_init(&mutex_interrupcion, 0, 1);
+    pthread_t hiloInterrupcion;
+    pthread_create(&hiloInterrupcion, NULL, escuchar_conexion_interrupt, NULL);
+    pthread_detach(hiloInterrupcion);
+
     while (1)
-        ;
+    {
+        // vaciar cache y tlb
+        if (entradas_cache > 0)
+            inicializar_cache(cache);
+        if (entradas_tlb > 0)
+            inicializar_tlb(tlb);
+        proceso = recibir_procesos();
+        interrupcion = false;
+        cpuinfo *procesocpu;
+        procesocpu = malloc(sizeof(cpuinfo));
+        procesocpu->tipo = 0; // Para que memoria sepa que le voy a pedir una instruccion
+        procesocpu->pid = *(int *)list_get(proceso, 0);
+        procesocpu->pc = *(int *)list_get(proceso, 1);
+        list_clean_and_destroy_elements(proceso, free);
+        do
+        {
+            instruccion = obtener_instruccion(procesocpu);
+            if (strcmp(instruccion, "NO"))
+            {
+                decodear_y_ejecutar_instruccion(instruccion, procesocpu, &interrupcion, cache, tlb);
+                sem_wait(&mutex_interrupcion);
+                interrupcion = check_interrupt(interrupcion);
+                sem_post(&mutex_interrupcion);
+            }
+            else
+            {
+                abort();
+            }
 
-    // esperar a que el cliente ingrese "Enter" y iniciar la planificación.
+        } while (!interrupcion);
+        // Puede haber una condición de carrera y llegar a desalojar un proceso que no es el correcto
+        if(procesocpu->tipo != 5 && procesocpu->tipo != 2 && procesocpu->tipo !=3){
+            t_paquete *paquete = crear_paquete();
+            int tipo = 4;
+            agregar_a_paquete(paquete, &tipo, sizeof(int));
+            agregar_a_paquete(paquete, &procesocpu->pid , sizeof(int));
+            agregar_a_paquete(paquete, &procesocpu->pc, sizeof(int));
+            enviar_paquete(paquete, conexion_kernel_dispatch);
+            eliminar_paquete(paquete);
+        }
 
-    // log_destroy(log_kernel);
-    // config_destroy(config_kernel);
+
+        // En caso de desalojo enviar cambios de la cache a memoria si hubo modificaciones
+        if (se_modifico_cache(cache))
+        {
+            enviar_cambios_memoria(cache, procesocpu, tlb);
+        }
+        free(procesocpu);
+    }
+
+    list_destroy(proceso);
+
+    // Limpieza general
+    close(conexion_kernel_dispatch);
+    close(conexion_kernel_interrupt);
+    close(conexion_memoria);
+    log_destroy(log_cpu);
+    config_destroy(config);
+    if (entradas_cache > 0)
+    {
+        for (int i = 0; i < entradas_cache; i++)
+        {
+            free(cache[i].contenido);
+        }
+        free(cache);
+    }
+    if (entradas_tlb > 0)
+        free(tlb);
 
     return 0;
 }
