@@ -104,7 +104,7 @@ void iniciar_config(char *vector)
     LOG_LEVEL = log_level_from_string(nivel_log);
     DUMP_PATH = config_get_string_value(nuevo_conf, "DUMP_PATH");
     if (!DUMP_PATH) abort();
-    DIR_PSEUDOCODIGO = config_get_string_value(nuevo_conf, "PATH_INSTRUCCIONES");
+    DIR_PSEUDOCODIGO = config_get_string_value(nuevo_conf, "PATH_PSEUDOCODIGO");
     if (!DIR_PSEUDOCODIGO) abort();
 
     return;
@@ -548,7 +548,7 @@ void acceso_tabla_paginas(t_list *tabla, int pag[], int nivel_actual, int *acces
         else
         {
             int *marco = list_get(tabla, pag[nivel_actual - 1]);
-            // log_trace(log_memo, "el marco es %d", *marco);
+            log_trace(log_memo, "el marco accedido es %d", *marco);
             agregar_a_paquete(paquete,(void*)marco,sizeof(int));
         }
     }
@@ -644,7 +644,7 @@ void leer_pag_entera(int pro, int marco)
     // memset(cadena,0,TAM_PAGINA);
     // strcpy(cadena,MEMORIA_USUARIO);
     sem_wait(&memo_usuario);
-    memcpy(cadena, MEMORIA_USUARIO + (marco * TAM_PAGINA), TAM_PAGINA);
+    memcpy(cadena, MEMORIA_USUARIO + (marco ), TAM_PAGINA);
     sem_post(&memo_usuario);
     strcat(cadena, "\0");
     log_trace(log_memo, "Se pide enviar la cadena %s", cadena);
@@ -654,7 +654,7 @@ void leer_pag_entera(int pro, int marco)
     return;
 }
 
-void leer_pag_por_tam(int pro, int marco, int tam, int *socket)
+void leer_pag_por_tam(int pro, int dir_fisica, int tam, int *socket)
 {
     if (tam > TAM_PAGINA)
     {
@@ -664,20 +664,22 @@ void leer_pag_por_tam(int pro, int marco, int tam, int *socket)
     else
     {
         struct pcb *proceso = find_by_PID(lista_procesos, pro);
-        char *cadena = malloc(tam + 1);
+        char *cadena = malloc(tam);
         // memset(cadena,0,TAM_PAGINA);
         // strcpy(cadena,MEMORIA_USUARIO);
         sem_wait(&memo_usuario);
-        memcpy(cadena, (char *)(MEMORIA_USUARIO + (marco * TAM_PAGINA)), tam);
+        
+        memcpy(cadena, (char *)(MEMORIA_USUARIO + (dir_fisica )), tam);
         sem_post(&memo_usuario);
-        strcat(cadena, "\0");
+        //strcat(cadena, "\0");
         //log_trace(log_memo, "Se pide enviar la cadena %s", cadena);
         proceso->cantLecturas++;
-        log_trace(log_memo, "## PID: %d - Lectura - Dir. Física: %d - Tamaño: %d", proceso->PID, ((marco * TAM_PAGINA)), tam);
-        // log_trace(log_memo, "%s", cadena);
+        log_trace(log_memo, "## PID: %d - Lectura - Dir. Física: %d - Tamaño: %d", proceso->PID, ((dir_fisica )), tam);
+        log_trace(log_memo, "AAAAAAA cadena tiene %s\n", cadena);
         
         enviar_mensaje(cadena,*socket);
         free(cadena);
+        log_trace(log_memo, "AAAAAAA cadena tiene %s\n", MEMORIA_USUARIO+dir_fisica);
     }
     return;
 }
@@ -693,14 +695,15 @@ void actualizar_pag_completa(int pro, int dir, int tam, char *cont, int *socket)
     {
         struct pcb *proceso = find_by_PID(lista_procesos, pro);
         sem_wait(&memo_usuario);
-        memset(MEMORIA_USUARIO + (dir * TAM_PAGINA), 0, TAM_PAGINA);
-        memcpy(MEMORIA_USUARIO + (dir * TAM_PAGINA), cont, tam * sizeof(char));
+        //memset(MEMORIA_USUARIO + (dir ), 0, TAM_PAGINA);
+        memcpy(MEMORIA_USUARIO + (dir ), cont, tam * sizeof(char));
         sem_post(&memo_usuario);
         proceso->cantEscrituras++;
         log_trace(log_memo, "## PID: %d - Escritura - Dir. Física: %d - Tamaño: %d", proceso->PID, ((dir * TAM_PAGINA)), tam);
 
         cadena = "OK";
     }
+    log_trace(log_memo," a CPU le mando %s",cadena);
     enviar_mensaje(cadena,*socket);
     // free(cadena);
     return;
@@ -779,6 +782,7 @@ log_trace(log_memo,"se pide cod %d con pid %d",*tarea,*PID);
             for (int i = 0; i < CANTIDAD_NIVELES; i++)
             {
                 entradas[i] = *((int *)list_get(partes, i + 2));
+                log_trace(log_memo,"se guardo %d en la posicion %d", entradas[i],i);
             }
             acceder_a_marco(*PID, entradas, &socket);
             free(entradas);
@@ -852,7 +856,7 @@ int main(int argc, char *argv[])
     //    abort();
     //}
     //iniciar_config(argv[1]);
-    iniciar_config("/home/utnso/tp-2025-1c-RompeComputadoras/memoria/memoria.conf");
+    iniciar_config("/home/utnso/Desktop/tp-2025-1c-RompeComputadoras/memoria/memoria.conf");
 
     sem_init(&creacion, 1, 1);
     sem_init(&memo_usuario, 1, 1);
