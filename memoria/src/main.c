@@ -699,8 +699,8 @@ void actualizar_pag_completa(int pro, int dir, int tam, char *cont, int *socket)
         memcpy(MEMORIA_USUARIO + (dir ), cont, tam * sizeof(char));
         sem_post(&memo_usuario);
         proceso->cantEscrituras++;
-        log_trace(log_memo, "## PID: %d - Escritura - Dir. Física: %d - Tamaño: %d", proceso->PID, ((dir * TAM_PAGINA)), tam);
-
+        log_trace(log_memo, "## PID: %d - Escritura - Dir. Física: %d - Tamaño: %d", proceso->PID, ((dir)), tam);
+log_trace(log_memo, "se pide escribir %s", cont);
         cadena = "OK";
     }
     log_trace(log_memo," a CPU le mando %s",cadena);
@@ -947,6 +947,7 @@ int main(int argc, char *argv[])
 
     // Creamos el hilo que crea el servidor
     pthread_t servidor;
+
     pthread_create(&servidor, NULL, gestion_conexiones, NULL);
 
     // Esperamos a que el hilo termine, aunque nunca lo haga
