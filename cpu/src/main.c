@@ -231,8 +231,9 @@ int traducir_direccion(int direccion_logica, cpuinfo *proceso, TLBEntrada *tlb)
         int marco;
         t_list *lista = recibir_paquete(conexion_memoria);
         marco = *(int *)list_get(lista, 0);
+        log_info(log_cpu,"memoria mando %d",marco);
         list_destroy_and_destroy_elements(lista, free);
-
+        log_info(log_cpu,"agus dejo %d",marco);
         return (marco * tam_pagina + desplazamiento);
     }
 }
@@ -334,7 +335,7 @@ void actualizar_cache(Pagina *cache, Pagina *pagina, cpuinfo *proceso, TLBEntrad
     int indice;
     if (!strcmp(reemplazo_cache, "CLOCK"))
     {
-        if ((indice = buscar_cache(cache, pagina->numero_pagina)) + 1) // RETORNA INDICE DE PAG EN CACHE
+        if ((indice = buscar_cache(cache, pagina->numero_pagina)) + 1)
         {
             cache[indice].referencia_bit = 1;
             reemplazado = true;
@@ -349,7 +350,6 @@ void actualizar_cache(Pagina *cache, Pagina *pagina, cpuinfo *proceso, TLBEntrad
                 {
                     cambio_cache->contenido = cache[puntero].contenido;
                     direccion_logica = cache[puntero].numero_pagina * tam_pagina;
-                    
                     cambio_cache->direccion_fisica = traducir_direccion(direccion_logica, proceso, tlb);
                     
                     agregar_a_paquete(paquete,&cambio_cache->tipo,sizeof(int));
@@ -611,12 +611,12 @@ void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, bool *
             agregar_a_paquete(paquete, dato, longitud * sizeof(char));
             enviar_paquete(paquete, conexion_memoria);
             eliminar_paquete(paquete);
-            char* chivo =recibir_mensaje(conexion_memoria); // Recibo el OK de memoria
-            //strcat(chivo,"\0");
-            if(strcmp(chivo,"OK")){
-                log_info(log_cpu,"no se escribio en memoria");
+            char* chivo = NULL;
+            chivo=recibir_mensaje(conexion_memoria); // Recibo el OK de memoria
+            if(strcmp(chivo,"OK"))
                 abort();
-            }
+            free(chivo);
+            
             log_info(log_cpu, "PID: %d - Acción: ESCRIBIR - Dirección Física: %d - Valor: %s", proceso->pid, dir_fisica, dato);
             proceso->pc = proceso->pc + 1;
 
@@ -627,7 +627,7 @@ void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, bool *
                 pagina_cache->modificado = 0;
                 pagina_cache->referencia_bit = 1;
                 memoriainfo *pagina = malloc(sizeof(memoriainfo));
-                pagina->tipo = 3; // LEER
+                pagina->tipo = 3;
                 pagina->pid = proceso->pid;
                 pagina->direccion = dir_fisica - desplazamiento;
                 t_paquete *paquete_pagina = crear_paquete();
@@ -819,7 +819,7 @@ void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, bool *
     }
     else
     {
-        log_info(log_cpu, "Instruccion desconocida: %s", comando);
+        log_trace(log_cpu, "Instruccion desconocida: %s", comando);
         for (int i=0; i<strlen(comando); i++) log_trace(log_cpu, "ASCII: %c", comando[i]);
     }
 
