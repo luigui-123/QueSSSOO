@@ -13,6 +13,8 @@
 #include <commons/collections/dictionary.h>
 #include <stdio.h>
 #include <commons/string.h>
+#include <inttypes.h>
+
 
 #define PROCESO_NUEVO 6
 #define SUSPENDER 7
@@ -205,16 +207,18 @@ void cambio_estado_exit(struct pcb *proceso_a_terminar)
         log_trace(log_kernel, "%d - Finaliza el proceso", proceso_a_terminar->PID);
 
         // LOG innecesariamente largo del TP:
-        log_trace(log_kernel, "## (%d) - Métricas de estado: NEW (%d) (%.2lu), READY (%d) (%.2lu), EXECUTE (%d) (%.2lu), BLOCKED (%d) (%.2lu), SUSPENDED BLOCKED (%d) (%.2lu), SUSPENDED READY (%d) (%.2lu), EXIT (%d) (%.2lu)",
-                  proceso_a_terminar->PID,
-                  proceso_a_terminar->ME[0], proceso_a_terminar->MT[0],
-                  proceso_a_terminar->ME[1], proceso_a_terminar->MT[1],
-                  proceso_a_terminar->ME[2], proceso_a_terminar->MT[2],
-                  proceso_a_terminar->ME[3], proceso_a_terminar->MT[3],
-                  proceso_a_terminar->ME[4], proceso_a_terminar->MT[4],
-                  proceso_a_terminar->ME[5], proceso_a_terminar->MT[5],
-                  proceso_a_terminar->ME[6], proceso_a_terminar->MT[6]
-                  );
+        log_trace(log_kernel,
+            "## (%d) - Métricas de estado: NEW (%d) (%02" PRId64 "), READY (%d) (%02" PRId64 "), EXECUTE (%d) (%02" PRId64 "), BLOCKED (%d) (%02" PRId64 "), SUSPENDED BLOCKED (%d) (%02" PRId64 "), SUSPENDED READY (%d) (%02" PRId64 ")",
+            proceso_a_terminar->PID,
+            proceso_a_terminar->ME[0], proceso_a_terminar->MT[0],
+            proceso_a_terminar->ME[1], proceso_a_terminar->MT[1],
+            proceso_a_terminar->ME[2], proceso_a_terminar->MT[2],
+            proceso_a_terminar->ME[3], proceso_a_terminar->MT[3],
+            proceso_a_terminar->ME[4], proceso_a_terminar->MT[4],
+            proceso_a_terminar->ME[5], proceso_a_terminar->MT[5]
+        );
+
+
 
         queue_push(lista_finished, proceso_a_terminar);
         // temporal_destroy(proceso_a_terminar->tiempo_estado);
