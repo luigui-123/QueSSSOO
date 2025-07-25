@@ -661,6 +661,7 @@ void leer_pag_entera(int pro, int marco)
 
 void leer_pag_por_tam(int pro, int dir_fisica, int tam, int *socket)
 {
+    sem_wait(&memo_usuario);
     if (tam > TAM_PAGINA-(dir_fisica%TAM_PAGINA))
     {
         char *cadena = "NO";
@@ -672,10 +673,10 @@ void leer_pag_por_tam(int pro, int dir_fisica, int tam, int *socket)
         char *cadena = malloc(tam+1);
         // memset(cadena,0,TAM_PAGINA);
         // strcpy(cadena,MEMORIA_USUARIO);
-        sem_wait(&memo_usuario);
+        
         
         memcpy(cadena, (char *)(MEMORIA_USUARIO + (dir_fisica )), tam);
-        sem_post(&memo_usuario);
+        
         strcat(cadena, "\0");
         //log_trace(log_memo, "Se pide enviar la cadena %s", cadena);
         proceso->cantLecturas++;
@@ -684,11 +685,13 @@ void leer_pag_por_tam(int pro, int dir_fisica, int tam, int *socket)
         enviar_mensaje(cadena,*socket);
         free(cadena);
     }
+    sem_post(&memo_usuario);
     return;
 }
 
 void actualizar_pag_completa(int pro, int dir, int tam, char *cont, int *socket)
 {
+    sem_wait(&memo_usuario);
     char *cadena;
     if (tam > TAM_PAGINA-(dir%TAM_PAGINA))
     {
@@ -697,14 +700,15 @@ void actualizar_pag_completa(int pro, int dir, int tam, char *cont, int *socket)
     else
     {
         struct pcb *proceso = find_by_PID(lista_procesos, pro);
-        sem_wait(&memo_usuario);
+        
         //memset(MEMORIA_USUARIO + (dir ), 0, TAM_PAGINA);
         memcpy(MEMORIA_USUARIO + (dir ), cont, tam * sizeof(char));
-        sem_post(&memo_usuario);
+        
         proceso->cantEscrituras++;
         log_trace(log_memo, "## PID: %d - Escritura - Dir. Física: %d - Tamaño: %d", proceso->PID, ((dir)), tam);
         cadena = "OK";
     }
+    sem_post(&memo_usuario);
     enviar_mensaje(cadena,*socket);
     // free(cadena);
     return;
@@ -727,7 +731,7 @@ void *ingresar_conexion(void *socket_void)
         t_list *partes = recibir_paquete(socket);
         if (list_is_empty(partes))
         {
-            list_destroy(partes);
+            list_destroy_and_destroy_elements(partes,free);
             return NULL;
         }
 
@@ -803,13 +807,13 @@ void *ingresar_conexion(void *socket_void)
             tam_leer_escribir = (int *)list_get(partes, 3);
             mensaje_a_escribir = string_duplicate((char *)list_get(partes, 4));
             actualizar_pag_completa(*PID, *direccion_fisica, *tam_leer_escribir, mensaje_a_escribir, &socket);
-            //free(mensaje_a_escribir);
+            free(mensaje_a_escribir);
             break;
         case ACTUALIZAR_PAG_COM:
             direccion_fisica = list_get(partes, 2);
-            mensaje_a_escribir = list_get(partes, 3);
+            mensaje_a_escribir = string_duplicate((char *)list_get(partes, 3));
             actualizar_pag_completa(*PID, *direccion_fisica, TAM_PAGINA, mensaje_a_escribir, &socket);
-            //free(mensaje_a_escribir);
+            free(mensaje_a_escribir);
             break;
         case TAREA:
             num_tarea = list_get(partes, 2);
