@@ -13,8 +13,6 @@
 #include <commons/collections/dictionary.h>
 #include <stdio.h>
 #include <commons/string.h>
-#include <inttypes.h>
-
 
 #define PROCESO_NUEVO 6
 #define SUSPENDER 7
@@ -199,26 +197,22 @@ void cambio_estado_exit(struct pcb *proceso_a_terminar)
 
     char *rta = recibir_mensaje(conexion_memoria);
     if (!strcmp(rta, "OK"))
-    {	
+    {
         free(rta);
-        close(conexion_memoria);
         sem_post(&memoria_ocupada);
 
         log_trace(log_kernel, "%d - Finaliza el proceso", proceso_a_terminar->PID);
 
         // LOG innecesariamente largo del TP:
-        log_trace(log_kernel,
-            "## (%d) - Métricas de estado: NEW (%d) (%02" PRId64 "), READY (%d) (%02" PRId64 "), EXECUTE (%d) (%02" PRId64 "), BLOCKED (%d) (%02" PRId64 "), SUSPENDED BLOCKED (%d) (%02" PRId64 "), SUSPENDED READY (%d) (%02" PRId64 ")",
-            proceso_a_terminar->PID,
-            proceso_a_terminar->ME[0], proceso_a_terminar->MT[0],
-            proceso_a_terminar->ME[1], proceso_a_terminar->MT[1],
-            proceso_a_terminar->ME[2], proceso_a_terminar->MT[2],
-            proceso_a_terminar->ME[3], proceso_a_terminar->MT[3],
-            proceso_a_terminar->ME[4], proceso_a_terminar->MT[4],
-            proceso_a_terminar->ME[5], proceso_a_terminar->MT[5]
-        );
-
-
+        log_trace(log_kernel, "## (%d) - Métricas de estado: NEW (%d) (%.2lu), READY (%d) (%.2lu), EXECUTE (%d) (%.2lu), BLOCKED (%d) (%.2lu), SUSPENDED BLOCKED (%d) (%.2lu), SUSPENDED READY (%d) (%.2lu), EXIT (%d)",
+                  proceso_a_terminar->PID,
+                  proceso_a_terminar->ME[0], proceso_a_terminar->MT[0],
+                  proceso_a_terminar->ME[1], proceso_a_terminar->MT[1],
+                  proceso_a_terminar->ME[2], proceso_a_terminar->MT[2],
+                  proceso_a_terminar->ME[3], proceso_a_terminar->MT[3],
+                  proceso_a_terminar->ME[4], proceso_a_terminar->MT[4],
+                  proceso_a_terminar->ME[5], proceso_a_terminar->MT[5],
+                  proceso_a_terminar->ME[6]);
 
         queue_push(lista_finished, proceso_a_terminar);
         // temporal_destroy(proceso_a_terminar->tiempo_estado);
@@ -370,8 +364,6 @@ void syscall_dump_memory(int *pid_proceso)
             log_trace(log_kernel, "%d - Pasa del estado Suspendido Bloqueado al Estado Suspended Ready", proceso_usado->PID);
         }
     }
-    close(conexion);
-
 }
 
 void *syscall_io(void *peticion)
@@ -654,8 +646,6 @@ void suspender_proceso(struct pcb *proceso)
     
     recibir_mensaje(conexion);
     
-    close(conexion);
-
     sem_post(&memoria_ocupada);
 
 
@@ -677,6 +667,9 @@ void *cronometrar_proceso(void *data)
 
     sem_wait(&semaforo_bloqued);
 
+    // OJO FEDE QUE ACA PUEDE HABER UNA CONDICION DE CARRERA ME DICE VALGRIND ( En realidad puede ser que nunca inicializas la variable, no necesariamente una condición de carrera)
+    // Creo que no inicializas las métricas del proceso en 0 ¿tal vez? Es de unas de las siguientes variables
+    // O quizas lista_bloqued no lo inicializas. No sabría decirte... Atte: Leo
     if (encontrar_proceso_especifico(lista_bloqued, proceso->PID) && cant_veces == proceso->ME[3])
     {
         proceso->ME[4] += 1;
@@ -780,8 +773,6 @@ void *planifacion_largo_plazo(void *l)
                 if (!strcmp(rta, "OK"))
                 {
                     free(rta);
-                    close(conexion_memoria);
-
                     proceso = (struct pcb *)queue_pop(lista_sus_ready);
 
                     sem_post(&semaforo_ready_sus);
@@ -797,7 +788,6 @@ void *planifacion_largo_plazo(void *l)
                 }
                 else
                 {
-                    close(conexion_memoria);
                     free(rta);
                     sem_post(&semaforo_ready_sus);
                     sem_wait(&memoria_ocupada);
@@ -836,9 +826,6 @@ void *planifacion_largo_plazo(void *l)
                 if (!strcmp(rta, "OK"))
                 {
                     free(rta);
-                    
-                    close(conexion_memoria);
-
                     proceso = (struct pcb *)queue_pop(lista_new);
 
                     sem_post(&semaforo_new);
@@ -854,8 +841,6 @@ void *planifacion_largo_plazo(void *l)
                 }
                 else
                 {
-                    close(conexion_memoria);
-
                     sem_post(&semaforo_new);
                     sem_wait(&memoria_ocupada);
                     sem_post(&procesos_creados);
@@ -895,7 +880,6 @@ void *planifacion_largo_plazo(void *l)
                     if (!strcmp(rta, "OK"))
                     {
                         list_remove_element(lista_sus_ready->elements, proceso);
-                        close(conexion_memoria);
 
                         free(rta);
                         sem_post(&semaforo_ready_sus);
@@ -913,8 +897,6 @@ void *planifacion_largo_plazo(void *l)
                     else
                     {
                         free(rta);
-                        close(conexion_memoria);
-
                         sem_post(&semaforo_ready_sus);
 
                         sem_wait(&memoria_ocupada);
@@ -952,7 +934,6 @@ void *planifacion_largo_plazo(void *l)
                     if (!strcmp(rta, "OK"))
                     {
                         list_remove_element(lista_new->elements, proceso);
-                        close(conexion_memoria);
 
                         free(rta);
                         sem_post(&semaforo_new);
@@ -969,7 +950,6 @@ void *planifacion_largo_plazo(void *l)
                     }
                     else
                     {
-                        close(conexion_memoria);
                         sem_post(&semaforo_ready);
                         sem_wait(&memoria_ocupada);
                         sem_post(&procesos_creados);
@@ -1154,6 +1134,9 @@ void cambio_estado_execute(struct Cpu *cpu, struct pcb *proceso)
     queue_push(lista_execute, proceso);
     proceso->ME[2] += 1;
     temporal_stop(proceso->tiempo_estado);
+
+// LEO TE PUTEA PORQUE DEBERIA SER +=
+
     proceso->MT[1] = temporal_gettime(proceso->tiempo_estado);
 
     temporal_destroy(proceso->tiempo_estado);
@@ -1321,13 +1304,13 @@ int main(int argc, char *argv[])
     sem_init(&procesos_listos, 1, 0);
 
     // Kernel "Core" 10/10 Joke
-    config_kernel = iniciar_config("/home/utnso/tp-2025-1c-RompeComputadoras/kernel/kernel.conf");
+    config_kernel = iniciar_config("/home/utnso/Desktop/tp-2025-1c-RompeComputadoras/kernel/kernel.conf");
 
     log_kernel = log_create("kernel.log", "kernel", true, LOG_LEVEL_TRACE);
     contador_procesos = 0;
 
-    char *nombreArchivo = "PLANI_LYM_PLAZO";
-    int tamanioProceso = 0;
+    char *nombreArchivo = "MEMORIA_BASE";
+    int tamanioProceso = 256;
 
     pthread_t servidor_cpu;
     pthread_create(&servidor_cpu, NULL, escuchar_cpu, NULL);
