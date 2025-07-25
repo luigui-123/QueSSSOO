@@ -9,7 +9,7 @@
 
 t_config* iniciar_config()
 {
-	t_config* nuevo_config = config_create("io.conf");
+	t_config* nuevo_config = config_create("/home/utnso/Desktop/tp-2025-1c-RompeComputadoras/io/io.conf");
 	return nuevo_config;
 }
 
@@ -29,8 +29,7 @@ int main(int argc, char* argv[]) {
     char* mensajeFin = string_from_format("La solicitud de %s ha finalizado", nombre_io);
 
     enviar_mensaje(nombre_io, conexion_kernel);
-    recibir_mensaje(conexion_kernel);
-
+    free(recibir_mensaje(conexion_kernel));
     while (true)
     {
     
@@ -46,7 +45,8 @@ int main(int argc, char* argv[]) {
 
         log_trace(io_log, "PID: %d - Fin de IO", *(int*)(list_get(proceso, 0)));
         enviar_mensaje(mensajeFin, conexion_kernel);
-    
+
+        list_destroy_and_destroy_elements(proceso,free);
 
     }
 
