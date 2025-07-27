@@ -143,17 +143,25 @@ void enviar_mensaje(char* mensaje, int socket_cliente)
 }
 
 
-void* recibir_buffer(int* cod, int* size, int socket_cliente)
-{
-	void * buffer;
+void* recibir_buffer(int* cod, int* size, int socket_cliente) {
+    void* buffer;
 
-	recv(socket_cliente, cod, sizeof(int), MSG_WAITALL);
-	recv(socket_cliente, size, sizeof(int), MSG_WAITALL);
+    if (recv(socket_cliente, cod, sizeof(int), MSG_WAITALL) <= 0)
+        return "-1";
 
-	buffer = malloc(*size);
-	recv(socket_cliente, buffer, *size, MSG_WAITALL);
-	return buffer;
+    if (recv(socket_cliente, size, sizeof(int), MSG_WAITALL) <= 0)
+        return "-1";
 
+    buffer = malloc(*size);
+    if (buffer == NULL)
+        return "-1";
+
+    if (recv(socket_cliente, buffer, *size, MSG_WAITALL) <= 0) {
+        free(buffer);
+        return "-1";
+    }
+
+    return buffer;
 }
 
 char* recibir_mensaje(int socket_cliente)
@@ -163,6 +171,13 @@ char* recibir_mensaje(int socket_cliente)
 	//log_info(log_modulo, "tamaño a recibido es %s", (char*)size);
 
  	char* buffer = (char*)recibir_buffer(&cod, &size, socket_cliente);
+
+	if (!strcmp(buffer, "-1"))
+	{
+		return "-1";
+	}
+
+	if (strlen(buffer) == 0) abort();
 
 	buffer = strcat(buffer, "\0");
 
@@ -198,8 +213,10 @@ t_list* recibir_paquete(int socket_cliente)
 	{
 		memcpy(&tamanio, buffer + desplazamiento, sizeof(int));
 		desplazamiento+=sizeof(int);
-		char* valor = malloc(tamanio);
+		char* valor = malloc(tamanio+1);
 		memcpy(valor, buffer+desplazamiento, tamanio);
+		// aumentamos el tamanio y aniadimos el caracter vacio
+		valor[tamanio] = '\0';
 		desplazamiento+=tamanio;
 		list_add(valores, valor);
 	}
