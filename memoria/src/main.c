@@ -36,8 +36,6 @@
 
 #define CORTAR 11
 
-
-
 // Globales Obligatorias
 t_config *nuevo_conf;
 t_log *log_memo;
@@ -103,9 +101,11 @@ void iniciar_config(char *vector)
     char *nivel_log = config_get_string_value(nuevo_conf, "LOG_LEVEL");
     LOG_LEVEL = log_level_from_string(nivel_log);
     DUMP_PATH = config_get_string_value(nuevo_conf, "DUMP_PATH");
-    if (!DUMP_PATH) abort();
+    if (!DUMP_PATH)
+        abort();
     DIR_PSEUDOCODIGO = config_get_string_value(nuevo_conf, "PATH_PSEUDOCODIGO");
-    if (!DIR_PSEUDOCODIGO) abort();
+    if (!DIR_PSEUDOCODIGO)
+        abort();
 
     return;
 }
@@ -148,9 +148,9 @@ t_list *generarTablaTamaño(int tam)
     for (int i = 0; i < tam / TAM_PAGINA; i++)
     {
         int *puntero = malloc(sizeof(int));
-        //sem_wait(&asignar_pag);
+        // sem_wait(&asignar_pag);
         *puntero = Asociar_Proceso_a_Marco(); // obtenerDireccion();
-        //sem_post(&asignar_pag);
+        // sem_post(&asignar_pag);
         list_add(listaPaginas, puntero);
     }
 
@@ -195,9 +195,9 @@ t_list *reasignar_tabla(int tam, FILE *swap)
     for (int i = 0; i < tam / TAM_PAGINA; i++)
     {
         int *puntero = malloc(sizeof(int)); // TODO Falta liberar este coso horroro de acá
-        //sem_wait(&asignar_pag);
+        // sem_wait(&asignar_pag);
         *puntero = Asociar_Proceso_a_Marco(); // obtenerDireccion();
-        //sem_post(&asignar_pag);
+        // sem_post(&asignar_pag);
         sem_wait(&memo_usuario);
         fread(MEMORIA_USUARIO + ((*puntero) * TAM_PAGINA), sizeof(char) * TAM_PAGINA, 1, swap);
         sem_post(&memo_usuario);
@@ -278,7 +278,7 @@ void peticion_creacion(int tamanio, char *archivo, int PDI, int *socket)
     sem_wait(&creacion);
     sem_wait(&cambiar_tam_memoria);
     char *mensaje;
-    
+
     if (tamanio < 0 || tamanio > TAM_MEMORIA_ACTUAL)
     {
         mensaje = "NO";
@@ -296,7 +296,7 @@ void peticion_creacion(int tamanio, char *archivo, int PDI, int *socket)
         crear_proceso(archivo, tamanio, PDI);
         mensaje = "OK";
     }
-    enviar_mensaje(mensaje,*socket);
+    enviar_mensaje(mensaje, *socket);
     // free(mensaje);
     sem_post(&cambiar_tam_memoria);
     sem_post(&creacion);
@@ -305,8 +305,14 @@ void peticion_creacion(int tamanio, char *archivo, int PDI, int *socket)
 
 void liberar(t_list *tabla, int nivel_actual, int nivel_max)
 {
-    if (!tabla || list_size(tabla) == 0)
+    if(tabla==NULL){
         return;
+    }
+    else if (list_is_empty(tabla)){
+        list_destroy(tabla);
+        return;
+    }
+        
     int tam_tabla = list_size(tabla);
     for (int i = 0; i < tam_tabla; i++)
     {
@@ -322,9 +328,9 @@ void liberar(t_list *tabla, int nivel_actual, int nivel_max)
             while (0 < list_size(elemento))
             {
                 int *puntero = list_remove(elemento, 0);
-                //sem_wait(&asignar_pag);
+                // sem_wait(&asignar_pag);
                 Liberar_Proceso_de_Marco(*puntero);
-                //sem_post(&asignar_pag);
+                // sem_post(&asignar_pag);
                 free(puntero);
             }
             list_destroy(elemento);
@@ -374,18 +380,128 @@ void enviar_instruccion(int pro, int instruccion, int *socket)
     }
     else
     {
-        
+
         cadena = "NO";
-        enviar_mensaje(cadena,*socket);
+        enviar_mensaje(cadena, *socket);
         return;
-        
     }
-    enviar_mensaje(cadena,*socket);
+    enviar_mensaje(cadena, *socket);
     free(cadena);
     return;
 }
+/*
+void eliminar_susp(int i)
+{
 
-void eliminar_proceso(int i,int * socket)
+    struct pcb *proceso = find_by_PID(lista_procesos, i);
+    sem_wait(&cambiar_tam_memoria);
+
+    int PID = -1, tam;
+    FILE *swap;
+    FILE *reemplazo;
+    sem_wait(&memo_swap);
+    if ((swap = fopen(PATH_SWAPFILE, "rb")) && (reemplazo = fopen("reemplazo", "wb")))
+    {
+        usleep(RETARDO_SWAP * 1000);
+        while (fread(&PID, sizeof(int), 1, swap) == 1 && fread(&tam, sizeof(int), 1, swap) == 1)
+        {
+            if (PID == i)
+            {
+                t_list *tabla = list_create();
+                t_list *listaPaginas = list_create();
+
+                for (int i = 0; i < tam / TAM_PAGINA; i++)
+                {
+                    int *puntero = malloc(sizeof(int)); // TODO Falta liberar este coso horroro de acá
+
+                    fseek(swap, sizeof(char) * TAM_PAGINA, SEEK_CUR);
+                    list_add(listaPaginas, puntero);
+                }
+
+                for (int i = 1; i <= CANTIDAD_NIVELES; i++)
+                {
+                    while (list_size(listaPaginas) != 0)
+                    {
+                        t_list *intermedia = list_create();
+                        int actual = 0;
+                        while (actual < ENTRADAS_POR_TABLA && list_size(listaPaginas) > 0)
+                        {
+                            list_add(intermedia, list_remove(listaPaginas, 0)); // PROBLEMA CON VALGRIM, NO LIBERA MEMORIA
+                            actual++;
+                        }
+                        list_add(tabla, intermedia);
+                    }
+
+                    list_destroy(listaPaginas);
+
+                    if (i < CANTIDAD_NIVELES)
+                    {
+                        listaPaginas = tabla;
+                        tabla = list_create();
+                    }
+                }
+                proceso->bajadaSWAP += 1;
+
+                proceso->Tabla_Pag = tabla;
+            }
+            else
+            {
+                fwrite(&PID, sizeof(int), 1, reemplazo);
+                fwrite(&tam, sizeof(int), 1, reemplazo);
+                char *cad_remp = malloc(sizeof(char) * tam);
+                fread(cad_remp, sizeof(char) * tam, 1, swap);
+                fwrite(cad_remp, sizeof(char) * tam, 1, reemplazo);
+                free(cad_remp);
+            }
+        }
+        fclose(reemplazo);
+        fclose(swap);
+        remove(PATH_SWAPFILE);
+        rename("reemplazo", PATH_SWAPFILE);
+        sem_post(&memo_swap);
+    }
+
+    sem_post(&cambiar_tam_memoria);
+    return;
+}
+*/
+
+void bajar_de_swap(int i)
+{
+    int PID = -1, tam;
+    FILE *swap;
+    FILE *reemplazo;
+    sem_wait(&memo_swap);
+    if ((swap = fopen(PATH_SWAPFILE, "rb")) && (reemplazo = fopen("reemplazo", "wb")))
+    {
+        usleep(RETARDO_SWAP * 1000);
+        while (fread(&PID, sizeof(int), 1, swap) == 1 && fread(&tam, sizeof(int), 1, swap) == 1)
+        {
+            if (PID == i)
+            {
+                fseek(swap, sizeof(char) * tam, SEEK_CUR);
+            }
+            else
+            {
+                fwrite(&PID, sizeof(int), 1, reemplazo);
+                fwrite(&tam, sizeof(int), 1, reemplazo);
+                char *cad_remp = malloc(sizeof(char) * tam);
+                fread(cad_remp, sizeof(char) * tam, 1, swap);
+                fwrite(cad_remp, sizeof(char) * tam, 1, reemplazo);
+                free(cad_remp);
+            }
+        }
+        fclose(reemplazo);
+        fclose(swap);
+        remove(PATH_SWAPFILE);
+        rename("reemplazo", PATH_SWAPFILE);
+        sem_post(&memo_swap);
+    }
+
+    return;
+}
+
+void eliminar_proceso(int i, int *socket)
 {
 
     bool mismoPDI(void *pdi)
@@ -396,17 +512,33 @@ void eliminar_proceso(int i,int * socket)
 
     struct pcb *proceso = list_remove_by_condition(lista_procesos, mismoPDI);
     // struct pcb *proceso= find_by_PID(lista,i);
-    // if (proceso->Tabla_Pag)
+
+    /*if (proceso->Tabla_Pag == NULL)
+    {
+        bajar_de_swap(proceso->PID);
+    }
+    else
+    {
+        liberar(proceso->Tabla_Pag, 1, CANTIDAD_NIVELES);
+    }*/
+
+    if (proceso->Tabla_Pag==NULL)
+    {
+        bajar_de_swap(i);
+    }
+
     liberar(proceso->Tabla_Pag, 1, CANTIDAD_NIVELES);
+
     sem_wait(&cambiar_tam_memoria);
     TAM_MEMORIA_ACTUAL += proceso->tamanio;
-    //log_trace(log_memo, "memoria tiene %d",TAM_MEMORIA_ACTUAL);
+    // log_trace(log_memo, "memoria tiene %d",TAM_MEMORIA_ACTUAL);
     sem_post(&cambiar_tam_memoria);
     list_destroy_and_destroy_elements(proceso->lista_instrucciones, free);
     log_trace(log_memo, "## PID %d - Proceso Destruido - Métricas - Acc.T.Pag: %d; Inst.Sol.: %d; SWAP: %d; Mem.Prin.: %d; Lec.Mem.: %d; Esc.Mem.: %d", proceso->PID, proceso->accesoTablaPag, proceso->instruccionSolicitada, proceso->bajadaSWAP, proceso->subidasMemo, proceso->cantLecturas, proceso->cantEscrituras);
+
     free(proceso);
-    char* mensaje="OK";
-    enviar_mensaje(mensaje,*socket);
+    char *mensaje = "OK";
+    enviar_mensaje(mensaje, *socket);
     return;
 }
 
@@ -428,18 +560,20 @@ void tabla_a_archivo(t_list *tabla, int nivel_actual, int nivel_max, FILE *swap)
         }
         else
         {
+            sem_wait(&memo_usuario);
             while (0 < list_size(elemento))
             {
                 int *pag = list_remove(elemento, 0);
                 // log_trace(log_memo,"se guardo el marco %d",pag);  // REEMPLAZAR POR PAG EN LUGAR DE INT
-                sem_wait(&memo_usuario);
+
                 fwrite(MEMORIA_USUARIO + ((*pag) * TAM_PAGINA), sizeof(char) * TAM_PAGINA, 1, swap);
-                sem_post(&memo_usuario);
-                //sem_wait(&asignar_pag);
+
+                // sem_wait(&asignar_pag);
                 Liberar_Proceso_de_Marco(*pag);
-                //sem_post(&asignar_pag);
+                // sem_post(&asignar_pag);
                 free(pag);
             }
+            sem_post(&memo_usuario);
 
             list_destroy(elemento);
         }
@@ -468,14 +602,17 @@ void suspender(int i, int *socket)
         tabla_a_archivo(proceso->Tabla_Pag, 1, CANTIDAD_NIVELES, swap);
         fclose(swap);
         sem_post(&memo_swap);
+        proceso->bajadaSWAP += 1;
+        log_trace(log_memo, "El proceso %d fue suspendido y tiene %d", proceso->PID, proceso->bajadaSWAP);
+
         proceso->Tabla_Pag = NULL;
         sem_wait(&cambiar_tam_memoria);
         TAM_MEMORIA_ACTUAL += tam;
         sem_post(&cambiar_tam_memoria);
-        char* mensaje="OK";
-        enviar_mensaje(mensaje,*socket);
+        char *mensaje = "OK";
+        enviar_mensaje(mensaje, *socket);
     }
-    
+
     return;
 }
 
@@ -503,7 +640,6 @@ void desuspender(int i, int *socket)
                 if (PID == i)
                 {
                     proceso->Tabla_Pag = reasignar_tabla(tam, swap); // READ que adelanta
-                    proceso->bajadaSWAP += 1;
                     proceso->subidasMemo += 1;
                 }
                 else
@@ -520,12 +656,12 @@ void desuspender(int i, int *socket)
             fclose(swap);
             remove(PATH_SWAPFILE);
             rename("reemplazo", PATH_SWAPFILE);
-            sem_post(&memo_swap);
         }
+        sem_post(&memo_swap);
         mensaje = "OK";
     }
     sem_post(&cambiar_tam_memoria);
-    enviar_mensaje(mensaje,*socket);
+    enviar_mensaje(mensaje, *socket);
     return;
 }
 
@@ -534,7 +670,7 @@ void acceso_tabla_paginas(t_list *tabla, int pag[], int nivel_actual, int *acces
     // Esperar tiempo espera
     // log_trace(log_memo, "la pag tiene %d paginas y se pide acceder a la %d", list_size(tabla), pag[nivel_actual - 1] + 1);
 
-    //t_paquete * paquete=crear_paquete();
+    // t_paquete * paquete=crear_paquete();
 
     if (pag[nivel_actual - 1] < list_size(tabla))
     {
@@ -548,23 +684,22 @@ void acceso_tabla_paginas(t_list *tabla, int pag[], int nivel_actual, int *acces
         else
         {
             int *marco = list_get(tabla, pag[nivel_actual - 1]);
-            //log_trace(log_memo, "el marco accedido es %d", *marco);
-            //agregar_a_paquete(paquete,(void*)marco,sizeof(int));
-            char* aux=string_itoa(*marco);
-            enviar_mensaje(aux,*socket);
+            // log_trace(log_memo, "el marco accedido es %d", *marco);
+            // agregar_a_paquete(paquete,(void*)marco,sizeof(int));
+            char *aux = string_itoa(*marco);
+            enviar_mensaje(aux, *socket);
             free(aux);
         }
     }
     else
     {
 
-        //int error=-1;
-        //agregar_a_paquete(paquete,(void*)&error,sizeof(int));
-        enviar_mensaje("NO",*socket);
-
+        // int error=-1;
+        // agregar_a_paquete(paquete,(void*)&error,sizeof(int));
+        enviar_mensaje("NO", *socket);
     }
-    //enviar_paquete(paquete,*socket);
-    //eliminar_paquete(paquete);
+    // enviar_paquete(paquete,*socket);
+    // eliminar_paquete(paquete);
     return;
 }
 
@@ -606,7 +741,7 @@ void dumpeo(t_list *tabla, int nivel_actual, int nivel_max, FILE *dump)
     return;
 }
 
-void dump_memory(int pro,int* socket)
+void dump_memory(int pro, int *socket)
 {
     struct pcb *proceso = find_by_PID(lista_procesos, pro);
     FILE *dump;
@@ -619,7 +754,7 @@ void dump_memory(int pro,int* socket)
     char *fecha = temporal_get_string_time("-%H:%M:%S.dmp");
     strcat(archivo, fecha);
     char *tam = string_itoa(proceso->tamanio);
-    char* mensaje;
+    char *mensaje;
     if ((dump = fopen(archivo, "w")) != NULL)
     {
         txt_write_in_file(dump, tam);
@@ -628,17 +763,18 @@ void dump_memory(int pro,int* socket)
         dumpeo(proceso->Tabla_Pag, 1, CANTIDAD_NIVELES, dump);
         // sem_post(&memo_usuario);
         fclose(dump);
-        mensaje="OK";
+        mensaje = "OK";
     }
-    else{
-        mensaje="NO";
+    else
+    {
+        mensaje = "NO";
     }
     free(archivo);
     free(fecha);
     free(num_pro);
     free(tam);
     log_trace(log_memo, "## PID: %d - Memory Dump solicitado", proceso->PID);
-    enviar_mensaje(mensaje,*socket);
+    enviar_mensaje(mensaje, *socket);
     return;
 }
 
@@ -649,10 +785,10 @@ void leer_pag_entera(int pro, int marco)
     // memset(cadena,0,TAM_PAGINA);
     // strcpy(cadena,MEMORIA_USUARIO);
     sem_wait(&memo_usuario);
-    memcpy(cadena, MEMORIA_USUARIO + (marco ), TAM_PAGINA);
+    memcpy(cadena, MEMORIA_USUARIO + (marco), TAM_PAGINA);
     sem_post(&memo_usuario);
     strcat(cadena, "\0");
-    //log_trace(log_memo, "Se pide enviar la cadena %s", cadena);
+    // log_trace(log_memo, "Se pide enviar la cadena %s", cadena);
     free(cadena);
     proceso->cantLecturas++;
     log_trace(log_memo, "## PID: %d - Lectura - Dir. Física: %d - Tamaño: %d", proceso->PID, ((marco * TAM_PAGINA)), TAM_PAGINA);
@@ -662,27 +798,25 @@ void leer_pag_entera(int pro, int marco)
 void leer_pag_por_tam(int pro, int dir_fisica, int tam, int *socket)
 {
     sem_wait(&memo_usuario);
-    if (tam > TAM_PAGINA-(dir_fisica%TAM_PAGINA))
+    if (tam > TAM_PAGINA - (dir_fisica % TAM_PAGINA))
     {
         char *cadena = "NO";
-        enviar_mensaje(cadena,*socket);
+        enviar_mensaje(cadena, *socket);
     }
     else
     {
         struct pcb *proceso = find_by_PID(lista_procesos, pro);
-        char *cadena = malloc(tam+1);
+        char *cadena = malloc(tam + 1);
         // memset(cadena,0,TAM_PAGINA);
         // strcpy(cadena,MEMORIA_USUARIO);
-        
-        
-        memcpy(cadena, (char *)(MEMORIA_USUARIO + (dir_fisica )), tam);
-        
-        strcat(cadena, "\0");
-        //log_trace(log_memo, "Se pide enviar la cadena %s", cadena);
+
+        memcpy(cadena, (char *)(MEMORIA_USUARIO + (dir_fisica)), tam);
+        cadena[tam] = '\0';
+        // log_trace(log_memo, "Se pide enviar la cadena %s", cadena);
         proceso->cantLecturas++;
-        log_trace(log_memo, "## PID: %d - Lectura - Dir. Física: %d - Tamaño: %d", proceso->PID, ((dir_fisica )), tam);
-        
-        enviar_mensaje(cadena,*socket);
+        log_trace(log_memo, "## PID: %d - Lectura - Dir. Física: %d - Tamaño: %d", proceso->PID, ((dir_fisica)), tam);
+
+        enviar_mensaje(cadena, *socket);
         free(cadena);
     }
     sem_post(&memo_usuario);
@@ -693,23 +827,23 @@ void actualizar_pag_completa(int pro, int dir, int tam, char *cont, int *socket)
 {
     sem_wait(&memo_usuario);
     char *cadena;
-    if (tam > TAM_PAGINA-(dir%TAM_PAGINA))
+    if (tam > TAM_PAGINA - (dir % TAM_PAGINA))
     {
         cadena = "NO";
     }
     else
     {
         struct pcb *proceso = find_by_PID(lista_procesos, pro);
-        
-        //memset(MEMORIA_USUARIO + (dir ), 0, TAM_PAGINA);
-        memcpy(MEMORIA_USUARIO + (dir ), cont, tam * sizeof(char));
-        
+
+        // memset(MEMORIA_USUARIO + (dir ), 0, TAM_PAGINA);
+        memcpy(MEMORIA_USUARIO + (dir), cont, tam * sizeof(char));
+
         proceso->cantEscrituras++;
         log_trace(log_memo, "## PID: %d - Escritura - Dir. Física: %d - Tamaño: %d", proceso->PID, ((dir)), tam);
         cadena = "OK";
     }
     sem_post(&memo_usuario);
-    enviar_mensaje(cadena,*socket);
+    enviar_mensaje(cadena, *socket);
     // free(cadena);
     return;
 }
@@ -731,14 +865,14 @@ void *ingresar_conexion(void *socket_void)
         t_list *partes = recibir_paquete(socket);
         if (list_is_empty(partes))
         {
-            list_destroy_and_destroy_elements(partes,free);
+            list_destroy_and_destroy_elements(partes, free);
             return NULL;
         }
 
         int *tarea = (int *)list_get(partes, 0);
         int *PID = (int *)list_get(partes, 1);
 
-//log_trace(log_memo,"se pide cod %d con pid %d",*tarea,*PID);
+        // log_trace(log_memo,"se pide cod %d con pid %d",*tarea,*PID);
 
         int *tam_proceso;
         char *archivo;
@@ -755,15 +889,15 @@ void *ingresar_conexion(void *socket_void)
             log_trace(log_memo, "## Kernel Conectado - FD del socket: %d", socket);
             tam_proceso = (int *)list_get(partes, 2);
             archivo = string_duplicate((char *)list_get(partes, 3));
-            //log_trace(log_memo, "el archivos es %s", archivo);
+            // log_trace(log_memo, "el archivos es %s", archivo);
             peticion_creacion(*tam_proceso, archivo, *PID, &socket);
-            
+
             free(archivo);
             list_destroy_and_destroy_elements(partes, free);
             return NULL;
         case SUSPENDER:
             log_trace(log_memo, "## Kernel Conectado - FD del socket: %d", socket);
-            suspender(*PID,&socket);
+            suspender(*PID, &socket);
             list_destroy_and_destroy_elements(partes, free);
             return NULL;
         case DES_SUSPENDER:
@@ -773,12 +907,12 @@ void *ingresar_conexion(void *socket_void)
             return NULL;
         case FINALIZAR:
             log_trace(log_memo, "## Kernel Conectado - FD del socket: %d", socket);
-            eliminar_proceso(*PID,&socket);
+            eliminar_proceso(*PID, &socket);
             list_destroy_and_destroy_elements(partes, free);
             return NULL;
         case MEMORY_DUMP:
             log_trace(log_memo, "## Kernel Conectado - FD del socket: %d", socket);
-            dump_memory(*PID,&socket);
+            dump_memory(*PID, &socket);
             list_destroy_and_destroy_elements(partes, free);
             return NULL;
 
@@ -788,7 +922,7 @@ void *ingresar_conexion(void *socket_void)
             for (int i = 0; i < CANTIDAD_NIVELES; i++)
             {
                 entradas[i] = *((int *)list_get(partes, i + 2));
-                //log_trace(log_memo,"se guardo %d en la posicion %d", entradas[i],i);
+                // log_trace(log_memo,"se guardo %d en la posicion %d", entradas[i],i);
             }
             acceder_a_marco(*PID, entradas, &socket);
             free(entradas);
@@ -824,8 +958,8 @@ void *ingresar_conexion(void *socket_void)
             return NULL;
 
         default:
-            char* mensaje="NO";
-            enviar_mensaje(mensaje,socket);
+            char *mensaje = "NO";
+            enviar_mensaje(mensaje, socket);
             break;
         }
         list_destroy_and_destroy_elements(partes, free);
@@ -859,10 +993,10 @@ void *gestion_conexiones()
 
 int main(int argc, char *argv[])
 {
-    //if (argc < 2){
-    //    abort();
-    //}
-    //iniciar_config(argv[1]);
+    // if (argc < 2){
+    //     abort();
+    // }
+    // iniciar_config(argv[1]);
     iniciar_config("/home/utnso/Desktop/tp-2025-1c-RompeComputadoras/memoria/memoria.conf");
 
     sem_init(&creacion, 1, 1);
@@ -886,7 +1020,6 @@ int main(int argc, char *argv[])
     // Creamos el log de memoria
     log_memo = log_create("memoria.log", "memoria", true, LOG_LEVEL); // TODO Poner en false
     log_debug(log_memo, " _______  _______  _______  _______  _______ _________ _______ \n(       )(  ____ \\(       )(  ___  )(  ____ )\\__   __/(  ___  )\n| () () || (    \\/| () () || (   ) || (    )|   ) (   | (   ) |\n| || || || (__    | || || || |   | || (____)|   | |   | (___) |\n| |(_)| ||  __)   | |(_)| || |   | ||     __)   | |   |  ___  |\n| |   | || (      | |   | || |   | || (\\ (      | |   | (   ) |\n| )   ( || (____/\\| )   ( || (___) || ) \\ \\_____) (___| )   ( |\n|/     \\|(_______/|/     \\|(_______)|/   \\__/\\_______/|/     \\|\n                                                               \n");
-
 
     //      peticion_creacion(tamaño_del_proceso , "archivo_de_pseudocodigo" , numero_de_proceso);
     //      acceder_a_marco(num_proceso , [posiciones_de_tabla]);
