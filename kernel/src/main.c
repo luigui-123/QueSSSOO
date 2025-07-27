@@ -1148,16 +1148,18 @@ void operar_proceso(struct Cpu *cpu)
 
                 peticion->tiempo = *((int *)list_get(paquete_syscall, 4));
                 int valor = -1;
+
                 sem_getvalue(&dispositivo_necesitado->usando_io, &valor);
+                peticion->io_asociada = dispositivo_necesitado;
+                
                 struct io *io_libre = NULL;
-                if (valor == 0 && (io_libre =encontrar_io_libre(lista_io, dispositivo_necesitado->nombre)) != NULL) 
-                {
+                
+
+                io_libre = encontrar_io_libre(lista_io, dispositivo_necesitado->nombre);
+                if ((valor == 0) && (io_libre != NULL)) 
                     peticion->io_asociada = io_libre;
-                }
-                else
-                {
-                    peticion->io_asociada = dispositivo_necesitado;
-                }
+            
+            
 
                 peticion->pid = pid_proceso;
 
