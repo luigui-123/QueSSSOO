@@ -404,6 +404,22 @@ struct io *encontrar_io_especifico(t_list *lista, char *nombre)
     return dispositivo;
 }
 
+
+struct io *encontrar_io_libre(t_list *lista, char *nombre)
+{
+    bool encontrar_io(void *elemento)
+    {
+        struct io *dispositivo = (struct io *)elemento;
+        int valor = -1;
+        sem_getvalue(&dispositivo->usando_io, &valor);
+        return (valor > 0 && strcmp(dispositivo->nombre, nombre) == 0);
+    }
+    sem_wait(&semaforo_io);
+    struct io *dispositivo = list_find(lista, encontrar_io);
+    sem_post(&semaforo_io);
+    return dispositivo;
+}
+
 void planificador_io(struct io *io_asociada)
 {
     while (1)
@@ -423,8 +439,11 @@ void planificador_io(struct io *io_asociada)
         {
             free(puntero_pid);
 
-            if (strcmp(recibir_mensaje(peticion->io_asociada->socket_io), "1"))
+            char* mensa=recibir_mensaje(peticion->io_asociada->socket_io);
+
+            if (strcmp(mensa, "1"))
             {
+                
                 struct pcb *proceso_a_terminar = encontrar_proceso_especifico(lista_bloqued, peticion->pid);
                 if (proceso_a_terminar)
                 {
@@ -455,6 +474,8 @@ void planificador_io(struct io *io_asociada)
                 cambio_estado_exit(proceso_a_terminar);
                 continue;
             }
+            // Agus free mensa
+            free(mensa);
 
             log_trace(log_kernel, "%d - Finalizo IO y pasa a READY", peticion->pid);
             struct pcb *proceso = encontrar_proceso_especifico(lista_bloqued, peticion->pid);
@@ -712,6 +733,7 @@ void *cronometrar_proceso(void *data)
         log_trace(log_kernel, "%d - Pasa del estado Bloqueado al Estado Bloqueado suspendido", proceso->PID);
         sem_post(&semaforo_bloqued);
         suspender_proceso(proceso);
+
         return NULL;
     }
     else
@@ -1125,7 +1147,18 @@ void operar_proceso(struct Cpu *cpu)
                 log_trace(log_kernel, "%d - Bloqueado por IO: %s", pid_proceso, dispositivo_necesitado->nombre);
 
                 peticion->tiempo = *((int *)list_get(paquete_syscall, 4));
-                peticion->io_asociada = dispositivo_necesitado;
+                int valor = -1;
+                sem_getvalue(&dispositivo_necesitado->usando_io, &valor);
+                struct io *io_libre = NULL;
+                if (valor == 0 && (io_libre =encontrar_io_libre(lista_io, dispositivo_necesitado->nombre)) != NULL) 
+                {
+                    peticion->io_asociada = io_libre;
+                }
+                else
+                {
+                    peticion->io_asociada = dispositivo_necesitado;
+                }
+
                 peticion->pid = pid_proceso;
 
                 solicitud_bloqueo(proceso_usado, rafaga_real_actual);
@@ -1163,7 +1196,8 @@ void operar_proceso(struct Cpu *cpu)
             break;
         }
         // ESTABA FUERA DEL DO WHILE
-        eliminar_paquete(paquete_syscall);
+        list_destroy_and_destroy_elements(paquete_syscall,free);
+        //eliminar_paquete(paquete_syscall);
 
     } while (termino != true);
 
@@ -1342,8 +1376,8 @@ int main(int argc, char *argv[])
     log_kernel = log_create("kernel.log", "kernel", true, LOG_LEVEL_TRACE);
     contador_procesos = 0;
 
-    char *nombreArchivo = "MEMORIA_BASE_TLB";
-    int tamanioProceso = 256;
+    char *nombreArchivo = "ESTABILIDAD_GENERAL";
+    int tamanioProceso = 0;
 
     pthread_t servidor_cpu;
     pthread_create(&servidor_cpu, NULL, escuchar_cpu, NULL);
