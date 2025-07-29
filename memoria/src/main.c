@@ -305,14 +305,16 @@ void peticion_creacion(int tamanio, char *archivo, int PDI, int *socket)
 
 void liberar(t_list *tabla, int nivel_actual, int nivel_max)
 {
-    if(tabla==NULL){
+    if (tabla == NULL)
+    {
         return;
     }
-    else if (list_is_empty(tabla)){
+    else if (list_is_empty(tabla))
+    {
         list_destroy(tabla);
         return;
     }
-        
+
     int tam_tabla = list_size(tabla);
     for (int i = 0; i < tam_tabla; i++)
     {
@@ -522,17 +524,21 @@ void eliminar_proceso(int i, int *socket)
         liberar(proceso->Tabla_Pag, 1, CANTIDAD_NIVELES);
     }*/
 
-    if (proceso->Tabla_Pag==NULL)
+    if (proceso->Tabla_Pag == NULL)
     {
         bajar_de_swap(i);
     }
 
-    liberar(proceso->Tabla_Pag, 1, CANTIDAD_NIVELES);
+    if (proceso->Tabla_Pag)
+    {
+        liberar(proceso->Tabla_Pag, 1, CANTIDAD_NIVELES);
 
-    sem_wait(&cambiar_tam_memoria);
-    TAM_MEMORIA_ACTUAL += proceso->tamanio;
-    // log_trace(log_memo, "memoria tiene %d",TAM_MEMORIA_ACTUAL);
-    sem_post(&cambiar_tam_memoria);
+        sem_wait(&cambiar_tam_memoria);
+        TAM_MEMORIA_ACTUAL += proceso->tamanio;
+        // log_trace(log_memo, "memoria tiene %d",TAM_MEMORIA_ACTUAL);
+        sem_post(&cambiar_tam_memoria);
+    }
+
     list_destroy_and_destroy_elements(proceso->lista_instrucciones, free);
     log_trace(log_memo, "## PID %d - Proceso Destruido - Métricas - Acc.T.Pag: %d; Inst.Sol.: %d; SWAP: %d; Mem.Prin.: %d; Lec.Mem.: %d; Esc.Mem.: %d", proceso->PID, proceso->accesoTablaPag, proceso->instruccionSolicitada, proceso->bajadaSWAP, proceso->subidasMemo, proceso->cantLecturas, proceso->cantEscrituras);
 
@@ -586,7 +592,7 @@ void tabla_a_archivo(t_list *tabla, int nivel_actual, int nivel_max, FILE *swap)
 }
 
 void suspender(int i, int *socket)
-{
+{   
     struct pcb *proceso = find_by_PID(lista_procesos, i);
     int tam = proceso->tamanio;
     int PID = proceso->PID;
@@ -997,7 +1003,7 @@ int main(int argc, char *argv[])
     //     abort();
     // }
     // iniciar_config(argv[1]);
-    iniciar_config("/home/utnso/Desktop/tp-2025-1c-RompeComputadoras/memoria/memoria.conf");
+    iniciar_config("/home/utnso/tp-2025-1c-RompeComputadoras/memoria/memoria.conf");
 
     sem_init(&creacion, 1, 1);
     sem_init(&memo_usuario, 1, 1);
