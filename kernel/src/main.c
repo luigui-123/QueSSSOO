@@ -384,6 +384,7 @@ void syscall_dump_memory(int *pid_proceso)
             log_trace(log_kernel, "%d - Pasa del estado Suspendido Bloqueado al Estado Suspended Ready", proceso_usado->PID);
         }
     }
+    free(mensaje);
     close(conexion);
 }
 
@@ -479,15 +480,14 @@ void bajar_io(struct io *io_asociada, struct peticion_io* peticion)
             temporal_destroy(proceso->tiempo_estado);
 
             proceso->tiempo_estado = temporal_create();
-        }
+        }   
         cambio_estado_exit(proceso);
     }
     else
     {
+        
         if (proceso != NULL)
         {
-
-            sem_wait(&semaforo_bloqued);
             list_remove_element(lista_bloqued->elements, proceso);
             sem_post(&semaforo_bloqued);
             temporal_stop(proceso->tiempo_estado);
@@ -497,6 +497,7 @@ void bajar_io(struct io *io_asociada, struct peticion_io* peticion)
         }
         else
         {
+            sem_post(&semaforo_bloqued);
             sem_wait(&semaforo_bloqued_sus);
             log_trace(log_kernel, "----------------------INICIA BUSQUEDA PARA PROCESO BLOQUEADO SUSPENDIDO----------------------");
 
@@ -514,10 +515,12 @@ void bajar_io(struct io *io_asociada, struct peticion_io* peticion)
         sem_wait(&semaforo_io);
         while (!queue_is_empty(io_asociada->espera))
         {
-            struct pcb *proceso_remover = queue_pop(io_asociada->espera);
-            sem_wait(&semaforo_bloqued);
+            struct peticion_io *sig_peticion = queue_pop(io_asociada->espera);
+            //cambiar a peticion_io
             log_trace(log_kernel, "----------------------INICIA BUSQUEDA PARA PROCESO BLOQUEADO----------------------");
-            struct pcb *proceso_a_terminar = encontrar_proceso_especifico(lista_bloqued, proceso_remover->PID);
+            
+            sem_wait(&semaforo_bloqued);
+            struct pcb *proceso_a_terminar = encontrar_proceso_especifico(lista_bloqued, sig_peticion->pid);
             log_trace(log_kernel, "----------------------FIN BUSQUEDA PARA PROCESO BLOQUEADO----------------------");
 
             if (proceso_a_terminar)
@@ -537,7 +540,7 @@ void bajar_io(struct io *io_asociada, struct peticion_io* peticion)
                 sem_wait(&semaforo_bloqued_sus);
                 log_trace(log_kernel, "----------------------INICIA BUSQUEDA PARA PROCESO BLOQUEADO SUSPENDIDO----------------------");
 
-                proceso_a_terminar = encontrar_proceso_especifico(lista_sus_bloqued, proceso_remover->PID);
+                proceso_a_terminar = encontrar_proceso_especifico(lista_sus_bloqued, sig_peticion->pid);
                 log_trace(log_kernel, "----------------------FIN BUSQUEDA PARA PROCESO BLOQUEADO SUSPENDIDO----------------------");
 
                 list_remove_element(lista_sus_bloqued->elements, proceso_a_terminar);
@@ -554,10 +557,12 @@ void bajar_io(struct io *io_asociada, struct peticion_io* peticion)
             list_remove_element(io_asociada->espera->elements, proceso);
         }
         sem_post(&semaforo_io);
-        close(io_asociada->socket_io);
-        free(io_asociada);
+        queue_destroy(io_asociada->espera);
+        
         
     }
+    close(io_asociada->socket_io);
+    free(io_asociada); 
     return;
 }
 
@@ -1223,6 +1228,17 @@ void operar_proceso(struct Cpu *cpu)
                 sem_wait(&semaforo_io);
                 // Buscar el semaforo mas pequeño y asignarlo ahi
                 t_list *list_ios_compatibles = encontrar_ios_compatibles(lista_io, dispositivo_necesitado->nombre);
+
+                if (list_is_empty(list_ios_compatibles))
+                {
+                    temporal_destroy(rafaga_real_actual);
+                    solicitud_exit(proceso_usado);
+                    termino = true;
+
+                }
+                else
+                {
+
                 struct io *la_mas_vaga = list_get_minimum(list_ios_compatibles, encontrar_io_con_menos_procesos);
 
                 peticion->io_asociada = la_mas_vaga;
@@ -1237,6 +1253,7 @@ void operar_proceso(struct Cpu *cpu)
                 pthread_create(&sys_io, NULL, (void *(*)(void *))syscall_io, (void *)peticion);
                 pthread_detach(sys_io);
                 sem_post(&semaforo_io);
+                }
             }
 
             termino = true;
@@ -1441,20 +1458,30 @@ int main(int argc, char *argv[])
     sem_init(&procesos_listos, 1, 0);
 
     // Kernel "Core" 10/10 Joke
-    config_kernel = iniciar_config("/home/utnso/tp-2025-1c-RompeComputadoras/kernel/kernel.conf");
 
     log_kernel = log_create("kernel.log", "kernel", true, LOG_LEVEL_TRACE);
     contador_procesos = 0;
 
-    char *nombreArchivo = "ESTABILIDAD_GENERAL";
-    int tamanioProceso = 0;
+    char *nombreArchivo; //= "MEMORIA_BASE_TLB";
+    int tamanioProceso; // = 256;
+
+    if (argc < 4)
+    {
+        log_trace(log_kernel, "Error, Parametros Invalidos");
+        return 1;
+    }
+    nombreArchivo = argv[1];
+
+    tamanioProceso = atoi(argv[2]);
+        
+    config_kernel = iniciar_config(argv[3]);
 
     pthread_t servidor_cpu;
     pthread_create(&servidor_cpu, NULL, escuchar_cpu, NULL);
     pthread_detach(servidor_cpu);
 
     pthread_t servidor_io;
-    pthread_create(&servidor_io, NULL, escuchar_io, NULL);
+    pthread_create(&servidor_io, NULL, escuchar_io, NULL);  
     pthread_detach(servidor_io);
 
     pthread_t planificador_largo;
@@ -1470,17 +1497,9 @@ int main(int argc, char *argv[])
     pthread_create(&planificador_mediano, NULL, planicador_mediano_plazo, NULL);
     pthread_detach(planificador_mediano);
 
-    /*
-    if (argc < 4)
-    {
-        log_trace(log_kernel, "Error, Parametros Invalidos");
-        return 1;
-    }
-    nombreArchivo = argv[2];
+    
 
 
-    tamanioProceso = atoi(argv[3]);
-    */
     log_info(log_kernel, "\n               ___\n             _//_\\\\\n           ,\"    //\".\n          /          \\\n        _/           |\n       (.-,--.       |\n       /o/  o \\     /\n       \\_\\    /  /\\/\\\n       (__`--'   ._)\n       /  `-.     |\n      (     ,`-.  |\n       `-,--\\_  ) |-.\n        _`.__.'  ,-' \\\n       |\\ )  _.-'    |\n       i-\\.'\\     ,--+.\n     .' .'   \\,-'/     \\\n    / /         /       \\\n    7_|         |       |\n    |/          \"i.___.j\"\n    /            |     |\\\n   /             |     | \\\n  /              |     |  |\n  |              |     |  |\n  |____          |     |-i'\n   |   \"\"\"\"----\"\"|     | |\n   \\           ,-'     |/\n    `.         `-,     |\n     |`-._      / /| |\\ \\\n     |    `-.   `' | ||`-'\n     |      |      `-'|\n     |      |         |\n     |      |         |\n     |      |         |\n     |      |         |\n     |      |         |\n     |      |         |\n     )`-.___|         |\n   .'`-.____)`-.___.-'(\n .'        .'-._____.-i\n/        .'           |h\n`-------/         .   |j\n        `--------' \"--'w\n ");
 
     getchar();
