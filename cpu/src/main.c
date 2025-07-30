@@ -503,6 +503,7 @@ void enviar_cambios_memoria(Pagina *cache, cpuinfo *proceso, TLBEntrada *tlb)
             agregar_a_paquete(paquete, &cambios_cache->direccion_fisica, sizeof(int));
             agregar_a_paquete(paquete, cambios_cache->contenido, sizeof(char)*tam_pagina);
             enviar_paquete(paquete, conexion_memoria);
+            log_info(log_cpu, "PID: %d - Memory Update - Pagina: %d - Frame: %d", proceso->pid, cache[i].numero_pagina, (cambios_cache->direccion_fisica)/tam_pagina);
             char *recibido = recibir_mensaje(conexion_memoria); // Recibo el OK de memoria
             if(strcmp(recibido,"OK")){
                 free(recibido);
@@ -525,13 +526,11 @@ void *escuchar_conexion_interrupt(void *i)
     while (1)
     {
         char *mensaje = recibir_mensaje(conexion_kernel_interrupt);
+        free(mensaje);
         log_info(log_cpu, "Llega interrupcion al puerto Interrupt");
-        if (!strcmp(mensaje, "DESALOJAR"))
-        {
-            sem_wait(&mutex_interrupcion);
-            interrupcion_conexion = true;
-            sem_post(&mutex_interrupcion);
-        }
+        sem_wait(&mutex_interrupcion);
+        interrupcion_conexion = true;
+        sem_post(&mutex_interrupcion);
     }
     return NULL;
 }
@@ -646,8 +645,10 @@ if (cantidad > 1) {
     }
 }
 
+strcat(parametros, "\0");
+
 free(instruccion);
-log_info(log_cpu, "PID: %d - Ejecutando: %s - %s", proceso->pid, instruccion_separada[0], parametros);
+log_info(log_cpu, "PID: %d - Ejecutando: %s - %s ", proceso->pid, instruccion_separada[0], parametros);
     
     //
     free(parametros);
