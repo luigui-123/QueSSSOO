@@ -1,3 +1,4 @@
+
 #include <commons/log.h>
 #include <commons/config.h>
 #include <sys/socket.h>
@@ -653,8 +654,16 @@ void desuspender(int i, int *socket)
                     fwrite(&PID, sizeof(int), 1, reemplazo);
                     fwrite(&tam, sizeof(int), 1, reemplazo);
                     char *cad_remp = malloc(sizeof(char) * tam);
-                    fread(cad_remp, sizeof(char) * tam, 1, swap);
-                    fwrite(cad_remp, sizeof(char) * tam, 1, reemplazo);
+                    //fread(cad_remp, sizeof(char) *tam,1, swap);
+
+                    size_t leidos = fread(cad_remp, sizeof(char), tam, swap);
+                    if (leidos < tam) {
+                        memset(cad_remp + leidos, 0, tam - leidos);  // Inicializar lo que no se leyó
+                    }
+
+
+                    fwrite(cad_remp, sizeof(char) *tam,1, reemplazo);
+
                     free(cad_remp);
                 }
             }
@@ -999,11 +1008,11 @@ void *gestion_conexiones()
 
 int main(int argc, char *argv[])
 {
-    // if (argc < 2){
-    //     abort();
-    // }
-    // iniciar_config(argv[1]);
-    iniciar_config("/home/utnso/tp-2025-1c-RompeComputadoras/memoria/memoria.conf");
+     if (argc < 2){
+         abort();
+     }
+     iniciar_config(argv[1]);
+    //iniciar_config("/home/utnso/tp-2025-1c-RompeComputadoras/memoria/memoria.conf");
 
     sem_init(&creacion, 1, 1);
     sem_init(&memo_usuario, 1, 1);
