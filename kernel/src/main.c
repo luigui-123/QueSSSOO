@@ -784,8 +784,9 @@ void *cronometrar_proceso(void *data)
 
     sem_wait(&semaforo_bloqued);
     log_trace(log_kernel, "----------------------INICIA BUSQUEDA PARA PROCESO BLOQUEADO----------------------");
+    struct pcb* proceso_segunda_ins = encontrar_proceso_especifico(lista_bloqued, proceso->PID);
 
-    if (encontrar_proceso_especifico(lista_bloqued, proceso->PID) && cant_veces == proceso->ME[3])
+    if (proceso_segunda_ins && cant_veces == proceso_segunda_ins->ME[3])
     {
         log_trace(log_kernel, "----------------------FIN BUSQUEDA PARA PROCESO BLOQUEADO----------------------");
 
@@ -821,7 +822,7 @@ void *planicador_mediano_plazo(void *m)
         proceso = list_get(lista_bloqued->elements, queue_size(lista_bloqued) - 1);
         sem_post(&semaforo_bloqued);
 
-        // hacer config;
+        
 
         pthread_t cronometro_bloqueado;
         pthread_create(&cronometro_bloqueado, NULL, cronometrar_proceso, (void *)proceso);
