@@ -156,21 +156,24 @@ void cambio_estado_ready(struct pcb *proceso)
             sem_post(&procesos_listos);
             return;
         }
-
+        sem_wait(&semaforo_execute);
         struct pcb *proceso_a_desalojar = list_get_maximum(lista_execute->elements, comparar_rafaga);
         if (proceso->rafaga < proceso_a_desalojar->rafaga)
         {
+
             struct Cpu *cpu_a_desalojar = encontrar_cpu_especifica_en_ejecucion(lista_cpu, proceso_a_desalojar->PID);
             // Enviar cpu socket interrupt
 
             char *mensaje = "DESALOJAR";
 
             log_trace(log_kernel, "%d - Desalojado por algoritmo SJF/SRT", proceso_a_desalojar->PID);
-
+            
             enviar_mensaje(mensaje, cpu_a_desalojar->socket_interrupt);
         }
+        sem_post(&semaforo_execute);
         sem_post(&semaforo_cpu);
     }
+    
     sem_post(&procesos_listos);
 }
 
@@ -228,7 +231,7 @@ struct pcb *encontrar_proceso_especifico(t_queue *lista, int pid)
     bool encontrar_proceso(void *elemento)
     {
         struct pcb *proceso = (struct pcb *)elemento;
-        log_trace(log_kernel, "-----------------------%d - Elemento PID, %d Elemento Buscado", proceso->PID, pid);
+        //log_trace(log_kernel, "-----------------------%d - Elemento PID, %d Elemento Buscado", proceso->PID, pid);
 
         return proceso->PID == pid;
     }
@@ -297,9 +300,7 @@ void syscall_dump_memory(int *pid_proceso)
 
     if (!strcmp(mensaje, "NO"))
     {
-        log_trace(log_kernel, "----------------------INICIA BUSQUEDA PARA PROCESO LISTA SUS BLOQUEADO----------------------");
         struct pcb *proceso_usado = encontrar_proceso_especifico(lista_bloqued, pid);
-        log_trace(log_kernel, "----------------------INICIA BUSQUEDA PARA PROCESO LISTA SUS BLOQUEADO----------------------");
         // struct pcb *proceso_usado = encontrar_proceso_especifico(lista_bloqued, pid);
         if (proceso_usado != NULL)
         {
@@ -315,9 +316,7 @@ void syscall_dump_memory(int *pid_proceso)
         }
         else
         {
-            log_trace(log_kernel, "----------------------INICIA BUSQUEDA PARA PROCESO LISTA SUS BLOQUEADO----------------------");
             struct pcb *proceso_usado = encontrar_proceso_especifico(lista_sus_bloqued, pid);
-            log_trace(log_kernel, "----------------------INICIA BUSQUEDA PARA PROCESO LISTA SUS BLOQUEADO----------------------");
             // struct pcb *proceso_usado = encontrar_proceso_especifico(lista_sus_bloqued, pid);
 
             if (!proceso_usado)
@@ -339,9 +338,7 @@ void syscall_dump_memory(int *pid_proceso)
 
     else
     {
-        log_trace(log_kernel, "----------------------INICIA BUSQUEDA PARA PROCESO LISTA BLOQUEADO----------------------");
         struct pcb *proceso_usado = encontrar_proceso_especifico(lista_bloqued, pid);
-        log_trace(log_kernel, "----------------------INICIA BUSQUEDA PARA PROCESO LISTA BLOQUEADO----------------------");
         // struct pcb *proceso_usado = encontrar_proceso_especifico(lista_bloqued, pid);
 
         if (proceso_usado != NULL)
@@ -360,9 +357,7 @@ void syscall_dump_memory(int *pid_proceso)
         {
             sem_wait(&semaforo_bloqued_sus);
 
-            log_trace(log_kernel, "----------------------INICIA BUSQUEDA PARA PROCESO LISTA SUS BLOQUEADO----------------------");
             struct pcb *proceso_usado = encontrar_proceso_especifico(lista_sus_bloqued, pid);
-            log_trace(log_kernel, "----------------------INICIA BUSQUEDA PARA PROCESO LISTA SUS BLOQUEADO----------------------");
             // struct pcb *proceso_usado = encontrar_proceso_especifico(lista_sus_bloqued, pid);
 
             if (!proceso_usado)
@@ -397,8 +392,11 @@ void *syscall_io(void *peticion)
     queue_push((peticion_nueva->io_asociada->espera), peticion_nueva);
 
     sem_post(&(peticion_nueva->io_asociada->usando_io));
+    int peticiones;
+    sem_getvalue(&(peticion_nueva->io_asociada->usando_io),&peticiones);
 
     sem_post(&semaforo_io);
+
 
     return NULL;
 }
@@ -446,9 +444,7 @@ void bajar_io(struct io *io_asociada, struct peticion_io* peticion)
     struct io *io_segunda = encontrar_io_especifico(lista_io, io_asociada->nombre);
 
     sem_wait(&semaforo_bloqued);
-    log_trace(log_kernel, "----------------------INICIA BUSQUEDA PARA PROCESO BLOQUEADO----------------------");
     struct pcb *proceso = encontrar_proceso_especifico(lista_bloqued, peticion->pid);
-    log_trace(log_kernel, "----------------------FIN BUSQUEDA PARA PROCESO BLOQUEADO----------------------");
 
     if (io_segunda)
     {
@@ -468,9 +464,7 @@ void bajar_io(struct io *io_asociada, struct peticion_io* peticion)
             sem_post(&semaforo_bloqued);
 
             sem_wait(&semaforo_bloqued_sus);
-            log_trace(log_kernel, "----------------------INICIA BUSQUEDA PARA PROCESO BLOQUEADO SUSPENDIDO----------------------");
             proceso = encontrar_proceso_especifico(lista_sus_bloqued, peticion->pid);
-            log_trace(log_kernel, "----------------------FIN BUSQUEDA PARA PROCESO BLOQUEADO SUSPENDIDO----------------------");
 
             list_remove_element(lista_sus_bloqued->elements, proceso);
             sem_post(&semaforo_bloqued_sus);
@@ -482,6 +476,13 @@ void bajar_io(struct io *io_asociada, struct peticion_io* peticion)
             proceso->tiempo_estado = temporal_create();
         }   
         cambio_estado_exit(proceso);
+        int peticiones;
+        sem_getvalue(&(io_asociada->usando_io), &peticiones);
+
+        for (int i=0; i<peticiones; i++)
+        {
+            sem_post(&(io_segunda->usando_io));
+        }
     }
     else
     {
@@ -499,10 +500,8 @@ void bajar_io(struct io *io_asociada, struct peticion_io* peticion)
         {
             sem_post(&semaforo_bloqued);
             sem_wait(&semaforo_bloqued_sus);
-            log_trace(log_kernel, "----------------------INICIA BUSQUEDA PARA PROCESO BLOQUEADO SUSPENDIDO----------------------");
 
             proceso = encontrar_proceso_especifico(lista_sus_bloqued, peticion->pid);
-            log_trace(log_kernel, "----------------------FIN BUSQUEDA PARA PROCESO BLOQUEADO SUSPENDIDO----------------------");
 
             list_remove_element(lista_sus_bloqued->elements, proceso);
             sem_post(&semaforo_bloqued_sus);
@@ -517,11 +516,9 @@ void bajar_io(struct io *io_asociada, struct peticion_io* peticion)
         {
             struct peticion_io *sig_peticion = queue_pop(io_asociada->espera);
             //cambiar a peticion_io
-            log_trace(log_kernel, "----------------------INICIA BUSQUEDA PARA PROCESO BLOQUEADO----------------------");
             
             sem_wait(&semaforo_bloqued);
             struct pcb *proceso_a_terminar = encontrar_proceso_especifico(lista_bloqued, sig_peticion->pid);
-            log_trace(log_kernel, "----------------------FIN BUSQUEDA PARA PROCESO BLOQUEADO----------------------");
 
             if (proceso_a_terminar)
             {
@@ -538,10 +535,8 @@ void bajar_io(struct io *io_asociada, struct peticion_io* peticion)
                 sem_post(&semaforo_bloqued);
 
                 sem_wait(&semaforo_bloqued_sus);
-                log_trace(log_kernel, "----------------------INICIA BUSQUEDA PARA PROCESO BLOQUEADO SUSPENDIDO----------------------");
 
                 proceso_a_terminar = encontrar_proceso_especifico(lista_sus_bloqued, sig_peticion->pid);
-                log_trace(log_kernel, "----------------------FIN BUSQUEDA PARA PROCESO BLOQUEADO SUSPENDIDO----------------------");
 
                 list_remove_element(lista_sus_bloqued->elements, proceso_a_terminar);
                 sem_post(&semaforo_bloqued_sus);
@@ -568,7 +563,6 @@ void bajar_io(struct io *io_asociada, struct peticion_io* peticion)
 
 void planificador_io(struct io *io_asociada)
 {
-    log_trace(log_kernel, "SOY %d", io_asociada->socket_io);
     int resultado;
 
     while (1)
@@ -617,9 +611,7 @@ void planificador_io(struct io *io_asociada)
 
             log_trace(log_kernel, "%d - Finalizo IO y pasa a READY", peticion->pid);
             sem_wait(&semaforo_bloqued);
-            log_trace(log_kernel, "----------------------INICIA BUSQUEDA PARA PROCESO BLOQUEADO----------------------");
             struct pcb *proceso = encontrar_proceso_especifico(lista_bloqued, peticion->pid);
-            log_trace(log_kernel, "----------------------FIN BUSQUEDA PARA PROCESO BLOQUEADO----------------------");
 
             if (proceso)
             {
@@ -640,9 +632,7 @@ void planificador_io(struct io *io_asociada)
             {
                 sem_post(&semaforo_bloqued);
                 sem_wait(&semaforo_bloqued_sus);
-                log_trace(log_kernel, "----------------------INICIA BUSQUEDA PARA PROCESO BLOQUEADO SUSPENDIDO----------------------");
                 proceso = encontrar_proceso_especifico(lista_sus_bloqued, peticion->pid);
-                log_trace(log_kernel, "----------------------FIN BUSQUEDA PARA PROCESO BLOQUEADO SUSPENDIDO----------------------");
 
                 if (!proceso)
                 {
@@ -682,6 +672,7 @@ void planificador_io(struct io *io_asociada)
             pthread_exit((void *)&resultado);
         }
         eliminar_paquete(paquete_io);
+        
     }
 }
 
@@ -735,8 +726,6 @@ void *escuchar_io()
 void suspender_proceso(struct pcb *proceso)
 {
 
-    sem_wait(&semaforo_bloqued);
-    sem_wait(&semaforo_bloqued_sus);
 
     // Peticion a memoria para hacer el Swap out.
     int conexion = peticion_memoria();
@@ -759,14 +748,17 @@ void suspender_proceso(struct pcb *proceso)
     free(rta);
     close(conexion);
 
+    sem_wait(&semaforo_bloqued);
+    sem_wait(&semaforo_bloqued_sus);
+
     list_remove_element(lista_bloqued->elements, proceso);
 
     queue_push(lista_sus_bloqued, proceso);
 
-    log_trace(log_kernel, "%d - Pasa del estado Bloqueado al Estado Bloqueado suspendido", proceso->PID);
-
     sem_post(&semaforo_bloqued);
     sem_post(&semaforo_bloqued_sus);
+    
+    log_trace(log_kernel, "%d - Pasa del estado Bloqueado al Estado Bloqueado suspendido", proceso->PID);
 
     sem_post(&memoria_ocupada);
 
@@ -783,11 +775,9 @@ void *cronometrar_proceso(void *data)
     usleep(tiempo);
 
     sem_wait(&semaforo_bloqued);
-    log_trace(log_kernel, "----------------------INICIA BUSQUEDA PARA PROCESO BLOQUEADO----------------------");
 
     if (encontrar_proceso_especifico(lista_bloqued, proceso->PID) && cant_veces == proceso->ME[3])
     {
-        log_trace(log_kernel, "----------------------FIN BUSQUEDA PARA PROCESO BLOQUEADO----------------------");
 
         proceso->ME[4] += 1;
         temporal_stop(proceso->tiempo_estado);
@@ -1026,7 +1016,6 @@ void *planifacion_largo_plazo(void *l)
                     }
                     else
                     {
-                        free(rta);
                         close(conexion_memoria);
 
                         sem_wait(&memoria_ocupada);
@@ -1113,8 +1102,6 @@ void solicitud_exit(struct pcb *proceso_a_terminar)
 
 void solicitud_bloqueo(struct pcb *proceso_a_bloquear, t_temporal *rafaga_real_actual)
 {
-    temporal_stop(rafaga_real_actual);
-
     int tiempo_real = temporal_gettime(rafaga_real_actual);
 
     actualizar_rafaga(proceso_a_bloquear, tiempo_real);
@@ -1131,6 +1118,7 @@ void solicitud_bloqueo(struct pcb *proceso_a_bloquear, t_temporal *rafaga_real_a
 
     cambio_estado_bloqued(proceso_a_bloquear);
 }
+
 void *encontrar_io_con_menos_procesos(void *elemento, void *elemento2)
 {
     struct io *io1 = (struct io *)elemento;
@@ -1164,7 +1152,6 @@ void operar_proceso(struct Cpu *cpu)
             struct pcb *proceso_a_terminar = cpu->proceso;
             proceso_a_terminar->PC = pc_proceso;
 
-            temporal_destroy(rafaga_real_actual);
             solicitud_exit(proceso_a_terminar);
 
             termino = true;
@@ -1188,8 +1175,6 @@ void operar_proceso(struct Cpu *cpu)
 
             solicitud_bloqueo(proceso_a_bloquear, rafaga_real_actual);
 
-            temporal_destroy(rafaga_real_actual);
-
             pthread_t dump_proceso;
             int *pid = malloc(sizeof(int));
             *pid = pid_proceso;
@@ -1212,7 +1197,6 @@ void operar_proceso(struct Cpu *cpu)
             struct io *dispositivo_necesitado = encontrar_io_especifico(lista_io, (char *)list_get(paquete_syscall, 3));
             if (!dispositivo_necesitado || dispositivo_necesitado->socket_io == -1)
             {
-                temporal_destroy(rafaga_real_actual);
                 solicitud_exit(proceso_usado);
 
                 termino = true;
@@ -1231,7 +1215,6 @@ void operar_proceso(struct Cpu *cpu)
 
                 if (list_is_empty(list_ios_compatibles))
                 {
-                    temporal_destroy(rafaga_real_actual);
                     solicitud_exit(proceso_usado);
                     termino = true;
 
@@ -1246,7 +1229,6 @@ void operar_proceso(struct Cpu *cpu)
                 peticion->pid = pid_proceso;
 
                 solicitud_bloqueo(proceso_usado, rafaga_real_actual);
-                temporal_destroy(rafaga_real_actual);
                 list_destroy(list_ios_compatibles);
 
                 pthread_t sys_io;
@@ -1295,8 +1277,9 @@ void operar_proceso(struct Cpu *cpu)
 void cambio_estado_execute(struct Cpu *cpu, struct pcb *proceso)
 {
     cpu->proceso = proceso;
-
+    sem_wait(&semaforo_execute);
     queue_push(lista_execute, proceso);
+    sem_post(&semaforo_execute);
     proceso->ME[2] += 1;
     temporal_stop(proceso->tiempo_estado);
     proceso->MT[1] = temporal_gettime(proceso->tiempo_estado);
@@ -1463,19 +1446,20 @@ int main(int argc, char *argv[])
     log_kernel = log_create("kernel.log", "kernel", true, LOG_LEVEL_TRACE);
     contador_procesos = 0;
 
-    char *nombreArchivo; //= "MEMORIA_BASE_TLB";
-    int tamanioProceso; // = 256;
+    //char *nombreArchivo = "ESTABILIDAD_GENERAL";
+    //int tamanioProceso = 0;
 
-    if (argc < 4)
-    {
-        log_trace(log_kernel, "Error, Parametros Invalidos");
-        return 1;
-    }
-    nombreArchivo = argv[1];
+    //if (argc < 4)
+    //{
+    //    log_trace(log_kernel, "Error, Parametros Invalidos");
+    //    return 1;
+    //}
+    char* nombreArchivo = argv[1];
 
-    tamanioProceso = atoi(argv[2]);
-        
-    config_kernel = iniciar_config(argv[3]);
+    int tamanioProceso = atoi(argv[2]);
+
+    config_kernel = iniciar_config(argv[3]);  
+    //config_kernel = iniciar_config("/home/utnso/Desktop/tp-2025-1c-RompeComputadoras/kernel/kernel.conf");
 
     pthread_t servidor_cpu;
     pthread_create(&servidor_cpu, NULL, escuchar_cpu, NULL);
@@ -1505,8 +1489,7 @@ int main(int argc, char *argv[])
 
     getchar();
     syscall_init_procc(tamanioProceso, nombreArchivo);
-    while (1)
-        ;
+    while (1);
 
     // esperar a que el cliente ingrese "Enter" y iniciar la planificación.
 
