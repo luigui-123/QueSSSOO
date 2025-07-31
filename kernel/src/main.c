@@ -784,9 +784,8 @@ void *cronometrar_proceso(void *data)
 
     sem_wait(&semaforo_bloqued);
     log_trace(log_kernel, "----------------------INICIA BUSQUEDA PARA PROCESO BLOQUEADO----------------------");
-    struct pcb* proceso_segunda_ins = encontrar_proceso_especifico(lista_bloqued, proceso->PID);
 
-    if (proceso_segunda_ins && cant_veces == proceso_segunda_ins->ME[3])
+    if (encontrar_proceso_especifico(lista_bloqued, proceso->PID) && cant_veces == proceso->ME[3])
     {
         log_trace(log_kernel, "----------------------FIN BUSQUEDA PARA PROCESO BLOQUEADO----------------------");
 
