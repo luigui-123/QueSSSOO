@@ -64,8 +64,10 @@ sem_t asignar_pag;
 sem_t memo_swap;
 sem_t cambiar_tam_memoria;
 
+sem_t operacion;
+
 // VER DICCIONARIO Y  CAMBIAR POR LISTA INSTRUCCIONES
-sem_t *consultar_memoria;
+
 void *MEMORIA_USUARIO;
 
 // Estructuras
@@ -193,17 +195,20 @@ t_list *reasignar_tabla(int tam, FILE *swap)
     t_list *tabla = list_create();
     t_list *listaPaginas = list_create();
 
+    sem_wait(&memo_usuario);
     for (int i = 0; i < tam / TAM_PAGINA; i++)
     {
         int *puntero = malloc(sizeof(int)); // TODO Falta liberar este coso horroro de acá
         // sem_wait(&asignar_pag);
         *puntero = Asociar_Proceso_a_Marco(); // obtenerDireccion();
         // sem_post(&asignar_pag);
-        sem_wait(&memo_usuario);
-        fread(MEMORIA_USUARIO + ((*puntero) * TAM_PAGINA), sizeof(char) * TAM_PAGINA, 1, swap);
-        sem_post(&memo_usuario);
+        int leido = fread(MEMORIA_USUARIO + ((*puntero) * TAM_PAGINA), sizeof(char) * TAM_PAGINA, 1, swap);
+        if (leido == 0 || leido == -1)  {
+            log_debug(log_memo, "es el proceso con %d en pags %d",tam,tam/TAM_PAGINA);log_debug(log_memo, "No capo");abort();
+        }
         list_add(listaPaginas, puntero);
     }
+    sem_post(&memo_usuario);
 
     for (int i = 1; i <= CANTIDAD_NIVELES; i++)
     {
@@ -482,16 +487,20 @@ void bajar_de_swap(int i)
         {
             if (PID == i)
             {
+                log_trace(log_memo, "%d estoy en %ld de swap", PID, ftell(swap));
                 fseek(swap, sizeof(char) * tam, SEEK_CUR);
+                log_trace(log_memo, "%d estoy en %ld de swap", PID, ftell(swap));
             }
             else
             {
+                log_trace(log_memo, "%d estoy en %ld de swap", PID, ftell(swap));
                 fwrite(&PID, sizeof(int), 1, reemplazo);
                 fwrite(&tam, sizeof(int), 1, reemplazo);
                 char *cad_remp = malloc(sizeof(char) * tam);
                 fread(cad_remp, sizeof(char) * tam, 1, swap);
                 fwrite(cad_remp, sizeof(char) * tam, 1, reemplazo);
                 free(cad_remp);
+                log_trace(log_memo, "%d estoy en %ld de swap", PID, ftell(swap));
             }
         }
         fclose(reemplazo);
@@ -593,11 +602,27 @@ void tabla_a_archivo(t_list *tabla, int nivel_actual, int nivel_max, FILE *swap)
 }
 
 void suspender(int i, int *socket)
-{   
+{
     struct pcb *proceso = find_by_PID(lista_procesos, i);
     int tam = proceso->tamanio;
     int PID = proceso->PID;
     FILE *swap;
+    
+
+    if (tam == 0)
+    {
+        liberar(proceso->Tabla_Pag, 1, CANTIDAD_NIVELES);
+        char *mensaje = "OK";
+        enviar_mensaje(mensaje, *socket);
+        return;
+    }
+
+    if(proceso->Tabla_Pag==NULL){
+        char *mensaje = "NO";
+        enviar_mensaje(mensaje, *socket);
+        return;
+    }
+
     sem_wait(&memo_swap);
     if ((swap = fopen(PATH_SWAPFILE, "ab")))
     {
@@ -610,7 +635,8 @@ void suspender(int i, int *socket)
         fclose(swap);
         sem_post(&memo_swap);
         proceso->bajadaSWAP += 1;
-        log_trace(log_memo, "El proceso %d fue suspendido y tiene %d", proceso->PID, proceso->bajadaSWAP);
+
+        log_trace(log_memo, "El proceso %d pesa %d", proceso->PID, proceso->tamanio);
 
         proceso->Tabla_Pag = NULL;
         sem_wait(&cambiar_tam_memoria);
@@ -625,9 +651,19 @@ void suspender(int i, int *socket)
 
 void desuspender(int i, int *socket)
 {
+
     char *mensaje;
     struct pcb *proceso = find_by_PID(lista_procesos, i);
+    if (proceso->tamanio == 0)
+    {
+        proceso->Tabla_Pag = generarTablaTamaño(0);
+        char *mensaje = "OK";
+        enviar_mensaje(mensaje, *socket);
+        return;
+    }
+
     sem_wait(&cambiar_tam_memoria);
+
     if (proceso->tamanio > TAM_MEMORIA_ACTUAL)
     {
         mensaje = "NO";
@@ -644,8 +680,10 @@ void desuspender(int i, int *socket)
             usleep(RETARDO_SWAP * 1000);
             while (fread(&PID, sizeof(int), 1, swap) == 1 && fread(&tam, sizeof(int), 1, swap) == 1)
             {
+               
                 if (PID == i)
                 {
+                    log_debug(log_memo,"num proceso %d",PID);
                     proceso->Tabla_Pag = reasignar_tabla(tam, swap); // READ que adelanta
                     proceso->subidasMemo += 1;
                 }
@@ -654,16 +692,19 @@ void desuspender(int i, int *socket)
                     fwrite(&PID, sizeof(int), 1, reemplazo);
                     fwrite(&tam, sizeof(int), 1, reemplazo);
                     char *cad_remp = malloc(sizeof(char) * tam);
-                    //fread(cad_remp, sizeof(char) *tam,1, swap);
-
-                    size_t leidos = fread(cad_remp, sizeof(char), tam, swap);
-                    if (leidos < tam) {
-                        memset(cad_remp + leidos, 0, tam - leidos);  // Inicializar lo que no se leyó
+                    int leido = fread(cad_remp, sizeof(char) * tam, 1, swap);
+                    if (leido == 0 || leido == -1) {
+                        log_trace(log_memo,"piden %d que es %d tam %d tiene %s primera instruccion %s y segunda %s",i,PID,tam,cad_remp,list_get(proceso->lista_instrucciones,0),list_get(proceso->lista_instrucciones,1));
+                        log_debug(log_memo, "ayuda"); abort();
                     }
 
+                    /*size_t leidos = fread(cad_remp, sizeof(char), tam, swap);
+                    if (leidos < tam) {
+                        memset(cad_remp + leidos, 0, tam - leidos);  // Inicializar lo que no se leyó
+                    }*/
 
-                    fwrite(cad_remp, sizeof(char) *tam,1, reemplazo);
-
+                    fwrite(cad_remp, sizeof(char) * tam, 1, reemplazo);
+                    log_trace(log_memo,"%d tam %d tiene %s",PID,tam,cad_remp);
                     free(cad_remp);
                 }
             }
@@ -675,6 +716,8 @@ void desuspender(int i, int *socket)
         sem_post(&memo_swap);
         mensaje = "OK";
     }
+
+    log_trace(log_memo, "El proceso %d pesa %d", proceso->PID, proceso->tamanio);
     sem_post(&cambiar_tam_memoria);
     enviar_mensaje(mensaje, *socket);
     return;
@@ -897,6 +940,8 @@ void *ingresar_conexion(void *socket_void)
         char *mensaje_a_escribir;
         int *num_tarea;
         usleep(RETARDO_MEMORIA * 1000);
+        sem_wait(&operacion);
+        
         switch (*tarea)
         {
             // Kernel
@@ -909,26 +954,33 @@ void *ingresar_conexion(void *socket_void)
 
             free(archivo);
             list_destroy_and_destroy_elements(partes, free);
+            sem_post(&operacion);
             return NULL;
         case SUSPENDER:
             log_trace(log_memo, "## Kernel Conectado - FD del socket: %d", socket);
             suspender(*PID, &socket);
+            log_debug(log_memo, "Pide suspender el proceso %d", *PID);
             list_destroy_and_destroy_elements(partes, free);
+            sem_post(&operacion);
             return NULL;
         case DES_SUSPENDER:
             log_trace(log_memo, "## Kernel Conectado - FD del socket: %d", socket);
+            log_debug(log_memo, "Pide desuspender el proceso %d", *PID);
             desuspender(*PID, &socket);
             list_destroy_and_destroy_elements(partes, free);
+            sem_post(&operacion);
             return NULL;
         case FINALIZAR:
             log_trace(log_memo, "## Kernel Conectado - FD del socket: %d", socket);
             eliminar_proceso(*PID, &socket);
             list_destroy_and_destroy_elements(partes, free);
+            sem_post(&operacion);
             return NULL;
         case MEMORY_DUMP:
             log_trace(log_memo, "## Kernel Conectado - FD del socket: %d", socket);
             dump_memory(*PID, &socket);
             list_destroy_and_destroy_elements(partes, free);
+            sem_post(&operacion);
             return NULL;
 
             // CPU
@@ -941,15 +993,18 @@ void *ingresar_conexion(void *socket_void)
             }
             acceder_a_marco(*PID, entradas, &socket);
             free(entradas);
+            sem_post(&operacion);
             break;
         case LEER_PAG:
             direccion_fisica = (int *)list_get(partes, 2);
             tam_leer_escribir = (int *)list_get(partes, 3);
             leer_pag_por_tam(*PID, *direccion_fisica, *tam_leer_escribir, &socket);
+            sem_post(&operacion);
             break;
         case LEER_PAG_COMPLETA:
             direccion_fisica = (int *)list_get(partes, 2);
             leer_pag_por_tam(*PID, *direccion_fisica, TAM_PAGINA, &socket);
+            sem_post(&operacion);
             break;
         case ACTUALIZAR_PAG:
             direccion_fisica = (int *)list_get(partes, 2);
@@ -957,24 +1012,29 @@ void *ingresar_conexion(void *socket_void)
             mensaje_a_escribir = string_duplicate((char *)list_get(partes, 4));
             actualizar_pag_completa(*PID, *direccion_fisica, *tam_leer_escribir, mensaje_a_escribir, &socket);
             free(mensaje_a_escribir);
+            sem_post(&operacion);
             break;
         case ACTUALIZAR_PAG_COM:
             direccion_fisica = list_get(partes, 2);
             mensaje_a_escribir = string_duplicate((char *)list_get(partes, 3));
             actualizar_pag_completa(*PID, *direccion_fisica, TAM_PAGINA, mensaje_a_escribir, &socket);
             free(mensaje_a_escribir);
+            sem_post(&operacion);
             break;
         case TAREA:
             num_tarea = list_get(partes, 2);
             enviar_instruccion(*PID, *num_tarea, &socket);
+            sem_post(&operacion);
             break;
         case CORTAR:
             list_destroy_and_destroy_elements(partes, free);
+            sem_post(&operacion);
             return NULL;
 
         default:
             char *mensaje = "NO";
             enviar_mensaje(mensaje, socket);
+            sem_post(&operacion);
             break;
         }
         list_destroy_and_destroy_elements(partes, free);
@@ -1008,20 +1068,21 @@ void *gestion_conexiones()
 
 int main(int argc, char *argv[])
 {
-     if (argc < 2){
-         abort();
-     }
-     iniciar_config(argv[1]);
-    //iniciar_config("/home/utnso/tp-2025-1c-RompeComputadoras/memoria/memoria.conf");
+    /*if (argc < 2){
+        abort();
+    }
+    iniciar_config(argv[1]);*/
+    iniciar_config("/home/utnso/Desktop/tp-2025-1c-RompeComputadoras/memoria/memoria.conf");
 
     sem_init(&creacion, 1, 1);
     sem_init(&memo_usuario, 1, 1);
     sem_init(&asignar_pag, 1, 1);
     sem_init(&memo_swap, 1, 1);
     sem_init(&cambiar_tam_memoria, 1, 1);
+    sem_init(&operacion, 1, 1);
 
     // Crea un hilo que carga las variables globales. El sistema debe esperar que termine
-    // consultar_memoria=sem_open("SEM_MOD_MEMO", O_CREAT | O_EXCL, S_IRUSR | S_IRUSR, 0);
+  
 
     // Cargamos las variables globales
     MEMORIA_USUARIO = malloc(TAM_MEMORIA);
