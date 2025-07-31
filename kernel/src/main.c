@@ -1287,6 +1287,7 @@ void operar_proceso(struct Cpu *cpu)
         // eliminar_paquete(paquete_syscall);
 
     } while (termino != true);
+    temporal_destroy(rafaga_real_actual);
 
     return;
 }
