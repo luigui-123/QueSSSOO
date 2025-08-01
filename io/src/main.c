@@ -30,26 +30,30 @@ int main(int argc, char* argv[]) {
 
     enviar_mensaje(nombre_io, conexion_kernel);
     free(recibir_mensaje(conexion_kernel));
-    while (true)
+    bool finalizar = false;
+    while (!finalizar)
     {
-    
     
         t_list *proceso;
         proceso = recibir_paquete(conexion_kernel);
-        
-        log_trace(io_log, "PID: %d - Inicio de IO - Tiempo: %d", *(int*)(list_get(proceso, 0)), *(int*)(list_get(proceso, 1)));
+        if(list_is_empty(proceso)){
+            list_destroy(proceso);
+            finalizar = true;
+        } else {
+            log_info(io_log, "PID: %d - Inicio de IO - Tiempo: %d", *(int*)(list_get(proceso, 0)), *(int*)(list_get(proceso, 1)));
 
-        unsigned int tiempo = *((int *)list_get(proceso, 1)) * 1000;
+            unsigned int tiempo = *((int *)list_get(proceso, 1)) * 1000;
 
-        usleep(tiempo);
+            usleep(tiempo);
 
-        log_trace(io_log, "PID: %d - Fin de IO", *(int*)(list_get(proceso, 0)));
-        enviar_mensaje(mensajeFin, conexion_kernel);
+            log_info(io_log, "PID: %d - Fin de IO", *(int*)(list_get(proceso, 0)));
+            enviar_mensaje(mensajeFin, conexion_kernel);
 
-        list_destroy_and_destroy_elements(proceso,free);
+            list_destroy_and_destroy_elements(proceso,free);
+        }
 
     }
-
+    free(mensajeFin);
 
     // Limpieza general
     close(conexion_kernel);
