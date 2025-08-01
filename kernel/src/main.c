@@ -456,6 +456,7 @@ void bajar_io(struct io *io_asociada, struct peticion_io* peticion)
 
     if (peticion == NULL)
     {
+        free(io_asociada->nombre);
         queue_destroy(io_asociada->espera);
         close(io_asociada->socket_io);
         free(io_asociada); 
@@ -580,6 +581,7 @@ void bajar_io(struct io *io_asociada, struct peticion_io* peticion)
         
         
     }
+    free(io_asociada->nombre);
     close(io_asociada->socket_io);
     free(io_asociada); 
     return;
@@ -731,6 +733,8 @@ void *escuchar_io()
         nueva_io->socket_io = socket_conectado_io;
         nueva_io->nombre = nombre;
 
+
+
         sem_init(&(nueva_io->usando_io), 1, 0);
         struct io *existe = (struct io *)encontrar_io_especifico(lista_io, nombre);
 
@@ -807,7 +811,7 @@ void *cronometrar_proceso(void *data)
 
     sem_wait(&semaforo_bloqued);
     struct pcb* proceso_segunda_inst = encontrar_proceso_especifico(lista_bloqued, proceso->PID);
-    
+
     if (encontrar_proceso_especifico(lista_bloqued, proceso->PID) && cant_veces == proceso_segunda_inst->ME[3])
     {
 
