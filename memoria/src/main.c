@@ -1144,7 +1144,7 @@ int main(int argc, char *argv[])
     // if (argc < 2){
     //     abort();
     // }
-    iniciar_config("/home/utnso/tp-2025-1c-RompeComputadoras/memoria/memoria.conf" /*argv[1]*/);
+    iniciar_config(argv[1]);
 
     log_memo = log_create("memoria.log", "memoria", true, LOG_LEVEL);
     // iniciar_config("/home/utnso/Desktop/tp-2025-1c-RompeComputadoras/memoria/memoria.conf");
