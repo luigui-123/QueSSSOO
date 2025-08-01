@@ -209,6 +209,8 @@ t_list* recibir_paquete(int socket_cliente)
 	int tamanio;
 	int cod;
 	buffer = recibir_buffer(&cod, &size, socket_cliente);
+	if (!strcmp(buffer, "-1"))
+		return valores;
 	while(desplazamiento < size)
 	{
 		memcpy(&tamanio, buffer + desplazamiento, sizeof(int));
