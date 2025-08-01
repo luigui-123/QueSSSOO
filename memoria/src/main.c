@@ -279,7 +279,7 @@ void crear_proceso(char *archivo, int tamanio_casteado, int num_proceso)
         list_add(lista_procesos, proceso);
     }
     free(dir);
-    log_trace(log_memo, "## PID: %d - Proceso Creado - Tamaño: %d", proceso->PID, proceso->tamanio);
+    log_info(log_memo, "## PID: %d - Proceso Creado - Tamaño: %d", proceso->PID, proceso->tamanio);
     return;
 }
 
@@ -363,7 +363,7 @@ void destruir_proceso(void *pro)
     sem_wait(&cambiar_tam_memoria);
     TAM_MEMORIA_ACTUAL += proceso->tamanio;
     sem_post(&cambiar_tam_memoria);
-    log_trace(log_memo, "## PID %d - Proceso Destruido - Métricas - Acc.T.Pag: %d; Inst.Sol.: %d; SWAP: %d; Mem.Prin.: %d; Lec.Mem.: %d; Esc.Mem.: %d", proceso->PID, proceso->accesoTablaPag, proceso->instruccionSolicitada, proceso->bajadaSWAP, proceso->subidasMemo, proceso->cantLecturas, proceso->cantEscrituras);
+    log_info(log_memo, "## PID %d - Proceso Destruido - Métricas - Acc.T.Pag: %d; Inst.Sol.: %d; SWAP: %d; Mem.Prin.: %d; Lec.Mem.: %d; Esc.Mem.: %d", proceso->PID, proceso->accesoTablaPag, proceso->instruccionSolicitada, proceso->bajadaSWAP, proceso->subidasMemo, proceso->cantLecturas, proceso->cantEscrituras);
     list_destroy_and_destroy_elements(proceso->lista_instrucciones, free);
     free(proceso);
 
@@ -393,7 +393,7 @@ void enviar_instruccion(int pro, int instruccion, int *socket)
     {
         cadena = string_duplicate((char *)list_get(proceso->lista_instrucciones, instruccion));
         proceso->instruccionSolicitada += 1;
-        log_trace(log_memo, "## PID: %d - Obtener instrucción: %d - Instrucción: %s", proceso->PID, instruccion + 1, cadena);
+        log_info(log_memo, "## PID: %d - Obtener instrucción: %d - Instrucción: %s", proceso->PID, instruccion + 1, cadena);
     }
     else
     {
@@ -562,7 +562,7 @@ void eliminar_proceso(int i, int *socket)
     }
 
     list_destroy_and_destroy_elements(proceso->lista_instrucciones, free);
-    log_trace(log_memo, "## PID %d - Proceso Destruido - Métricas - Acc.T.Pag: %d; Inst.Sol.: %d; SWAP: %d; Mem.Prin.: %d; Lec.Mem.: %d; Esc.Mem.: %d", proceso->PID, proceso->accesoTablaPag, proceso->instruccionSolicitada, proceso->bajadaSWAP, proceso->subidasMemo, proceso->cantLecturas, proceso->cantEscrituras);
+    log_info(log_memo, "## PID %d - Proceso Destruido - Métricas - Acc.T.Pag: %d; Inst.Sol.: %d; SWAP: %d; Mem.Prin.: %d; Lec.Mem.: %d; Esc.Mem.: %d", proceso->PID, proceso->accesoTablaPag, proceso->instruccionSolicitada, proceso->bajadaSWAP, proceso->subidasMemo, proceso->cantLecturas, proceso->cantEscrituras);
 
     free(proceso);
     char *mensaje = "OK";
@@ -764,6 +764,8 @@ void acceso_tabla_paginas(t_list *tabla, int pag[], int nivel_actual, int *acces
         else
         {
             int *marco = list_get(tabla, pag[nivel_actual - 1]);
+            if(*marco==-1)
+            log_debug(log_memo,"-1");
             // log_trace(log_memo, "el marco accedido es %d", *marco);
             // agregar_a_paquete(paquete,(void*)marco,sizeof(int));
             char *aux = string_itoa(*marco);
@@ -855,7 +857,7 @@ void dump_memory(int pro, int *socket)
     free(fecha);
     free(num_pro);
     free(tam);
-    log_trace(log_memo, "## PID: %d - Memory Dump solicitado", proceso->PID);
+    log_info(log_memo, "## PID: %d - Memory Dump solicitado", proceso->PID);
     enviar_mensaje(mensaje, *socket);
     return;
 }
@@ -873,7 +875,7 @@ void leer_pag_entera(int pro, int marco)
     // log_trace(log_memo, "Se pide enviar la cadena %s", cadena);
     free(cadena);
     proceso->cantLecturas++;
-    log_trace(log_memo, "## PID: %d - Lectura - Dir. Física: %d - Tamaño: %d", proceso->PID, ((marco * TAM_PAGINA)), TAM_PAGINA);
+    log_info(log_memo, "## PID: %d - Lectura - Dir. Física: %d - Tamaño: %d", proceso->PID, ((marco * TAM_PAGINA)), TAM_PAGINA);
     return;
 }
 
@@ -896,7 +898,7 @@ void leer_pag_por_tam(int pro, int dir_fisica, int tam, int *socket)
         cadena[tam] = '\0';
         // log_trace(log_memo, "Se pide enviar la cadena %s", cadena);
         proceso->cantLecturas++;
-        log_trace(log_memo, "## PID: %d - Lectura - Dir. Física: %d - Tamaño: %d", proceso->PID, ((dir_fisica)), tam);
+        log_info(log_memo, "## PID: %d - Lectura - Dir. Física: %d - Tamaño: %d", proceso->PID, ((dir_fisica)), tam);
 
         enviar_mensaje(cadena, *socket);
         free(cadena);
@@ -921,7 +923,7 @@ void actualizar_pag_completa(int pro, int dir, int tam, char *cont, int *socket)
         memcpy(MEMORIA_USUARIO + (dir), cont, tam * sizeof(char));
 
         proceso->cantEscrituras++;
-        log_trace(log_memo, "## PID: %d - Escritura - Dir. Física: %d - Tamaño: %d", proceso->PID, ((dir)), tam);
+        log_info(log_memo, "## PID: %d - Escritura - Dir. Física: %d - Tamaño: %d", proceso->PID, ((dir)), tam);
         cadena = "OK";
     }
     sem_post(&memo_usuario);
@@ -952,7 +954,9 @@ void *ingresar_conexion(void *socket_void)
         }
 
         int *tarea = (int *)list_get(partes, 0);
-        int *PID = (int *)list_get(partes, 1);
+        int *PID;
+        if((*tarea)!=CORTAR)
+            PID=(int *)list_get(partes, 1);
 
         // log_trace(log_memo,"se pide cod %d con pid %d",*tarea,*PID);
 
@@ -970,7 +974,7 @@ void *ingresar_conexion(void *socket_void)
         {
             // Kernel
         case PROCESO_NUEVO:
-            log_trace(log_memo, "## Kernel Conectado - FD del socket: %d", socket);
+            log_info(log_memo, "## Kernel Conectado - FD del socket: %d", socket);
             tam_proceso = (int *)list_get(partes, 2);
             archivo = string_duplicate((char *)list_get(partes, 3));
             // log_trace(log_memo, "el archivos es %s", archivo);
@@ -981,27 +985,27 @@ void *ingresar_conexion(void *socket_void)
             sem_post(&operacion);
             return NULL;
         case SUSPENDER:
-            log_trace(log_memo, "## Kernel Conectado - FD del socket: %d", socket);
+            log_info(log_memo, "## Kernel Conectado - FD del socket: %d", socket);
             suspender(*PID, &socket);
             //log_debug(log_memo, "Pide suspender el proceso %d", *PID);
             list_destroy_and_destroy_elements(partes, free);
             sem_post(&operacion);
             return NULL;
         case DES_SUSPENDER:
-            log_trace(log_memo, "## Kernel Conectado - FD del socket: %d", socket);
+            log_info(log_memo, "## Kernel Conectado - FD del socket: %d", socket);
             //log_debug(log_memo, "Pide desuspender el proceso %d", *PID);
             desuspender(*PID, &socket);
             list_destroy_and_destroy_elements(partes, free);
             sem_post(&operacion);
             return NULL;
         case FINALIZAR:
-            log_trace(log_memo, "## Kernel Conectado - FD del socket: %d", socket);
+            log_info(log_memo, "## Kernel Conectado - FD del socket: %d", socket);
             eliminar_proceso(*PID, &socket);
             list_destroy_and_destroy_elements(partes, free);
             sem_post(&operacion);
             return NULL;
         case MEMORY_DUMP:
-            log_trace(log_memo, "## Kernel Conectado - FD del socket: %d", socket);
+            log_info(log_memo, "## Kernel Conectado - FD del socket: %d", socket);
             dump_memory(*PID, &socket);
             list_destroy_and_destroy_elements(partes, free);
             sem_post(&operacion);
@@ -1092,11 +1096,14 @@ void *gestion_conexiones()
 
 int main(int argc, char *argv[])
 {
-    /*if (argc < 2){
+    
+    if (argc < 2){
         abort();
     }
-    iniciar_config(argv[1]);*/
-    iniciar_config("/home/utnso/Desktop/tp-2025-1c-RompeComputadoras/memoria/memoria.conf");
+    iniciar_config(argv[1]);
+
+    log_memo = log_create("memoria.log", "memoria", true, LOG_LEVEL);
+    //iniciar_config("/home/utnso/Desktop/tp-2025-1c-RompeComputadoras/memoria/memoria.conf");
 
     sem_init(&creacion, 1, 1);
     sem_init(&memo_usuario, 1, 1);
@@ -1117,7 +1124,7 @@ int main(int argc, char *argv[])
     memset(bitmap, 0, sizeof(bool) * TAM_MEMORIA / TAM_PAGINA);
 
     // Creamos el log de memoria
-    log_memo = log_create("memoria.log", "memoria", true, LOG_LEVEL); // TODO Poner en false
+    // TODO Poner en false
     log_debug(log_memo, " _______  _______  _______  _______  _______ _________ _______ \n(       )(  ____ \\(       )(  ___  )(  ____ )\\__   __/(  ___  )\n| () () || (    \\/| () () || (   ) || (    )|   ) (   | (   ) |\n| || || || (__    | || || || |   | || (____)|   | |   | (___) |\n| |(_)| ||  __)   | |(_)| || |   | ||     __)   | |   |  ___  |\n| |   | || (      | |   | || |   | || (\\ (      | |   | (   ) |\n| )   ( || (____/\\| )   ( || (___) || ) \\ \\_____) (___| )   ( |\n|/     \\|(_______/|/     \\|(_______)|/   \\__/\\_______/|/     \\|\n                                                               \n");
 
     //      peticion_creacion(tamaño_del_proceso , "archivo_de_pseudocodigo" , numero_de_proceso);
