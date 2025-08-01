@@ -147,6 +147,11 @@ void Liberar_Proceso_de_Marco(int i)
 t_list *generarTablaTamaño(int tam)
 {
     t_list *tabla = list_create();
+
+    if (tam == 0)
+    {
+        return tabla;
+    }
     t_list *listaPaginas = list_create();
 
     for (int i = 0; i < tam / TAM_PAGINA; i++)
@@ -194,6 +199,12 @@ t_list *generarTablaTamaño(int tam)
 t_list *reasignar_tabla(int tam, FILE *swap)
 {
     t_list *tabla = list_create();
+
+    if (tam == 0)
+    {
+        return tabla;
+    }
+
     t_list *listaPaginas = list_create();
 
     sem_wait(&memo_usuario);
@@ -206,8 +217,8 @@ t_list *reasignar_tabla(int tam, FILE *swap)
         int leido = fread(MEMORIA_USUARIO + ((*puntero) * TAM_PAGINA), sizeof(char) * TAM_PAGINA, 1, swap);
         if (leido == 0 || leido == -1)
         {
-            //log_debug(log_memo, "es el proceso con %d en pags %d", tam, tam / TAM_PAGINA);
-            //log_debug(log_memo, "No capo");
+            // log_debug(log_memo, "es el proceso con %d en pags %d", tam, tam / TAM_PAGINA);
+            // log_debug(log_memo, "No capo");
             abort();
         }
         list_add(listaPaginas, puntero);
@@ -236,6 +247,33 @@ t_list *reasignar_tabla(int tam, FILE *swap)
             tabla = list_create();
         }
     }
+/*
+for (int i = 1; i <= CANTIDAD_NIVELES; i++)
+    {
+        while (list_size(listaPaginas) != 0)
+        {
+            t_list *intermedia = list_create();
+            int actual = 0;
+            while (actual < ENTRADAS_POR_TABLA && list_size(listaPaginas) > 0)
+            {
+                list_add(intermedia, list_remove(listaPaginas, 0)); // PROBLEMA CON VALGRIM, NO LIBERA MEMORIA
+                actual++;
+            }
+            list_add(tabla, intermedia);
+            // intermedia=list_create();
+            // list_destroy(intermedia);
+        }
+
+        list_destroy(listaPaginas);
+
+        if (i < CANTIDAD_NIVELES)
+        {
+            // list_destroy(listaPaginas);
+            listaPaginas = tabla;
+            tabla = list_create();
+        }
+        
+    }*/
     return tabla;
 }
 
@@ -318,11 +356,12 @@ void liberar(t_list *tabla, int nivel_actual, int nivel_max)
     if (list_is_empty(tabla))
     {
         list_destroy(tabla);
+        tabla=NULL;
         return;
     }
     else if (tabla == NULL)
     {
-        
+
         return;
     }
 
@@ -351,6 +390,7 @@ void liberar(t_list *tabla, int nivel_actual, int nivel_max)
         }
     }
     list_destroy(tabla); // libera solo la lista (no los elementos, ya fueron)
+    tabla=NULL;
     return;
 }
 
@@ -621,15 +661,6 @@ void suspender(int i, int *socket)
     FILE *swap;
     sem_wait(&memo_swap);
 
-    if (tam == 0)
-    {
-        liberar(proceso->Tabla_Pag, 1, CANTIDAD_NIVELES);
-        char *mensaje = "OK";
-        enviar_mensaje(mensaje, *socket);
-        sem_post(&memo_swap);
-        return;
-    }
-
     if (proceso->Tabla_Pag == NULL)
     {
         char *mensaje = "NO";
@@ -645,6 +676,17 @@ void suspender(int i, int *socket)
         fwrite(&PID, sizeof(int), 1, swap);
         fwrite(&tam, sizeof(int), 1, swap);
         // log_trace(log_memo,"proceos %d",PID);
+
+        if (tam == 0)
+        {
+            liberar(proceso->Tabla_Pag, 1, CANTIDAD_NIVELES);
+            proceso->Tabla_Pag = NULL;
+            char *mensaje = "OK";
+            enviar_mensaje(mensaje, *socket);
+            sem_post(&memo_swap);
+            return;
+        }
+
         tabla_a_archivo(proceso->Tabla_Pag, 1, CANTIDAD_NIVELES, swap);
         fclose(swap);
 
@@ -675,14 +717,7 @@ void desuspender(int i, int *socket)
     struct pcb *proceso = find_by_PID(lista_procesos, i);
 
     sem_wait(&cambiar_tam_memoria);
-    if (proceso->tamanio == 0)
-    {
-        proceso->Tabla_Pag = generarTablaTamaño(0);
-        char *mensaje = "OK";
-        enviar_mensaje(mensaje, *socket);
-        sem_post(&cambiar_tam_memoria);
-        return;
-    }
+    
 
     if (proceso->tamanio > TAM_MEMORIA_ACTUAL)
     {
@@ -703,7 +738,7 @@ void desuspender(int i, int *socket)
 
                 if (PID == i)
                 {
-                    //log_debug(log_memo, "num proceso %d", PID);
+                    // log_debug(log_memo, "num proceso %d", PID);
                     proceso->Tabla_Pag = reasignar_tabla(tam, swap); // READ que adelanta
                     proceso->subidasMemo += 1;
                 }
@@ -716,7 +751,7 @@ void desuspender(int i, int *socket)
                     if (leido == 0 || leido == -1)
                     {
                         // log_trace(log_memo,"piden %d que es %d tam %d tiene %s primera instruccion %s y segunda %s",i,PID,tam,cad_remp,list_get(proceso->lista_instrucciones,0),list_get(proceso->lista_instrucciones,1));
-                        //log_debug(log_memo, "ayuda");
+                        // log_debug(log_memo, "ayuda");
                         abort();
                     }
 
@@ -764,8 +799,8 @@ void acceso_tabla_paginas(t_list *tabla, int pag[], int nivel_actual, int *acces
         else
         {
             int *marco = list_get(tabla, pag[nivel_actual - 1]);
-            if(*marco==-1)
-            log_debug(log_memo,"-1");
+            if (*marco == -1)
+                log_debug(log_memo, "-1");
             // log_trace(log_memo, "el marco accedido es %d", *marco);
             // agregar_a_paquete(paquete,(void*)marco,sizeof(int));
             char *aux = string_itoa(*marco);
@@ -953,10 +988,16 @@ void *ingresar_conexion(void *socket_void)
             return NULL;
         }
 
+        
+        sem_wait(&operacion);
+
         int *tarea = (int *)list_get(partes, 0);
         int *PID;
-        if((*tarea)!=CORTAR)
-            PID=(int *)list_get(partes, 1);
+        if ((*tarea) != CORTAR)
+        {
+            PID = (int *)list_get(partes, 1);
+            //log_debug(log_memo, "PID - %d", *PID);
+        }
 
         // log_trace(log_memo,"se pide cod %d con pid %d",*tarea,*PID);
 
@@ -968,7 +1009,9 @@ void *ingresar_conexion(void *socket_void)
         char *mensaje_a_escribir;
         int *num_tarea;
         usleep(RETARDO_MEMORIA * 1000);
-        sem_wait(&operacion);
+        
+
+        //log_debug(log_memo, "tarea %d", *tarea);
 
         switch (*tarea)
         {
@@ -987,13 +1030,13 @@ void *ingresar_conexion(void *socket_void)
         case SUSPENDER:
             log_info(log_memo, "## Kernel Conectado - FD del socket: %d", socket);
             suspender(*PID, &socket);
-            //log_debug(log_memo, "Pide suspender el proceso %d", *PID);
+            // log_debug(log_memo, "Pide suspender el proceso %d", *PID);
             list_destroy_and_destroy_elements(partes, free);
             sem_post(&operacion);
             return NULL;
         case DES_SUSPENDER:
             log_info(log_memo, "## Kernel Conectado - FD del socket: %d", socket);
-            //log_debug(log_memo, "Pide desuspender el proceso %d", *PID);
+            // log_debug(log_memo, "Pide desuspender el proceso %d", *PID);
             desuspender(*PID, &socket);
             list_destroy_and_destroy_elements(partes, free);
             sem_post(&operacion);
@@ -1055,6 +1098,7 @@ void *ingresar_conexion(void *socket_void)
             sem_post(&operacion);
             break;
         case CORTAR:
+            close(socket);
             list_destroy_and_destroy_elements(partes, free);
             sem_post(&operacion);
             return NULL;
@@ -1096,14 +1140,14 @@ void *gestion_conexiones()
 
 int main(int argc, char *argv[])
 {
-    
-    if (argc < 2){
-        abort();
-    }
-    iniciar_config(argv[1]);
+
+    // if (argc < 2){
+    //     abort();
+    // }
+    iniciar_config("/home/utnso/tp-2025-1c-RompeComputadoras/memoria/memoria.conf" /*argv[1]*/);
 
     log_memo = log_create("memoria.log", "memoria", true, LOG_LEVEL);
-    //iniciar_config("/home/utnso/Desktop/tp-2025-1c-RompeComputadoras/memoria/memoria.conf");
+    // iniciar_config("/home/utnso/Desktop/tp-2025-1c-RompeComputadoras/memoria/memoria.conf");
 
     sem_init(&creacion, 1, 1);
     sem_init(&memo_usuario, 1, 1);
@@ -1125,7 +1169,7 @@ int main(int argc, char *argv[])
 
     // Creamos el log de memoria
     // TODO Poner en false
-    log_debug(log_memo, " _______  _______  _______  _______  _______ _________ _______ \n(       )(  ____ \\(       )(  ___  )(  ____ )\\__   __/(  ___  )\n| () () || (    \\/| () () || (   ) || (    )|   ) (   | (   ) |\n| || || || (__    | || || || |   | || (____)|   | |   | (___) |\n| |(_)| ||  __)   | |(_)| || |   | ||     __)   | |   |  ___  |\n| |   | || (      | |   | || |   | || (\\ (      | |   | (   ) |\n| )   ( || (____/\\| )   ( || (___) || ) \\ \\_____) (___| )   ( |\n|/     \\|(_______/|/     \\|(_______)|/   \\__/\\_______/|/     \\|\n                                                               \n");
+    log_info(log_memo, "Memoria en ejecucion");
 
     //      peticion_creacion(tamaño_del_proceso , "archivo_de_pseudocodigo" , numero_de_proceso);
     //      acceder_a_marco(num_proceso , [posiciones_de_tabla]);
