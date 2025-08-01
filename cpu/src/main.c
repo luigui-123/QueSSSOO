@@ -251,11 +251,12 @@ int traducir_direccion(int direccion_logica, cpuinfo *proceso, TLBEntrada *tlb)
         marco = atoi(numero);
         while(marco == -1){
             log_debug(log_cpu, "MARCO = -1");
-            free(numero);
             enviar_paquete(paquete, conexion_memoria);
             numero = recibir_mensaje(conexion_memoria);
             marco = atoi(numero);
+            log_debug(log_cpu, "sigo en While");
         }
+        log_debug(log_cpu, "Sali del WHile y el valor del string es %s", numero);
         eliminar_paquete(paquete);
         free(numero);
         log_info(log_cpu, "PID: %d - OBTENER MARCO - Pagina: %d - Marco: %d", proceso->pid, numero_pagina, marco);
@@ -526,7 +527,6 @@ bool interrupcion_conexion = false;
 
 void *escuchar_conexion_interrupt(void *i)
 {
-    //Posible condicion de carrera si justo modifico finalizar?
     while (!finalizar)
     {
         char *mensaje = recibir_mensaje(conexion_kernel_interrupt);
@@ -568,8 +568,13 @@ char *obtener_instruccion(cpuinfo *procesocpu)
     agregar_a_paquete(paquete, &procesocpu->pid, sizeof(int));
     agregar_a_paquete(paquete, &procesocpu->pc, sizeof(int));
     enviar_paquete(paquete, conexion_memoria);
-    eliminar_paquete(paquete);
     instruccion = recibir_mensaje(conexion_memoria);
+    while(!strcmp(instruccion, "-1")){
+        log_debug(log_cpu, "Error al obtener la instruccion");
+        enviar_paquete(paquete, conexion_memoria);
+        instruccion = recibir_mensaje(conexion_memoria);
+    }
+    eliminar_paquete(paquete);
 
     return instruccion;
 }
