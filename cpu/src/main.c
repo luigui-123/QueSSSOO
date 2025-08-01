@@ -31,6 +31,8 @@ char *puerto_kernel_dispatch;
 char *ip_memoria;
 char *puerto_memoria;
 
+bool finalizar = false;
+
 t_log *log_cpu;
 t_config *config;
 
@@ -244,10 +246,17 @@ int traducir_direccion(int direccion_logica, cpuinfo *proceso, TLBEntrada *tlb)
             agregar_a_paquete(paquete, &n, sizeof(int));
         }
         enviar_paquete(paquete, conexion_memoria);
-        eliminar_paquete(paquete);
 
         char *numero = recibir_mensaje(conexion_memoria);
         marco = atoi(numero);
+        while(marco == -1){
+            log_debug(log_cpu, "MARCO = -1");
+            free(numero);
+            enviar_paquete(paquete, conexion_memoria);
+            numero = recibir_mensaje(conexion_memoria);
+            marco = atoi(numero);
+        }
+        eliminar_paquete(paquete);
         free(numero);
         log_info(log_cpu, "PID: %d - OBTENER MARCO - Pagina: %d - Marco: %d", proceso->pid, numero_pagina, marco);
         return (marco * tam_pagina + desplazamiento);
@@ -517,7 +526,8 @@ bool interrupcion_conexion = false;
 
 void *escuchar_conexion_interrupt(void *i)
 {
-    while (1)
+    //Posible condicion de carrera si justo modifico finalizar?
+    while (!finalizar)
     {
         char *mensaje = recibir_mensaje(conexion_kernel_interrupt);
         free(mensaje);
@@ -581,8 +591,13 @@ void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, bool *
         longitud_parametros += string_length(instruccion_separada[i]);
     }
 
-    longitud_parametros += (cantidad - 2); // espacios entre los parámetros
-    longitud_parametros += 1;              // para '\0'
+    if(cantidad == 1){
+        longitud_parametros = 1;
+    } else{
+        longitud_parametros += (cantidad - 2); // espacios entre los parámetros
+        longitud_parametros += 1;              // para '\0'
+    }
+
 
     char *parametros = malloc(sizeof(char) * longitud_parametros);
     parametros[0] = '\0'; // inicializar string vacío
@@ -601,9 +616,8 @@ void decodear_y_ejecutar_instruccion(char *instruccion, cpuinfo *proceso, bool *
 
     free(instruccion);
     log_info(log_cpu, "PID: %d - Ejecutando: %s - %s ", proceso->pid, instruccion_separada[0], parametros);
-
-    //
     free(parametros);
+
     if (!strcmp(instruccion_separada[0], "WRITE"))
     {
 
@@ -891,7 +905,8 @@ int main(int argc, char *argv[])
     strcat(nombre_log_cpu, argv[1]);
     strcat(nombre_log_cpu, ".log");
 
-    log_cpu = log_create(nombre_log_cpu, "cpu", true, LOG_LEVEL_INFO);
+    log_cpu = log_create(nombre_log_cpu, "cpu", true, LOG_LEVEL_DEBUG);
+    free(nombre_log_cpu);
 
     char *path_config = argv[2];
     // argv[1]
@@ -938,7 +953,7 @@ int main(int argc, char *argv[])
     pthread_create(&hiloInterrupcion, NULL, escuchar_conexion_interrupt, NULL);
     pthread_detach(hiloInterrupcion);
 
-    while (1)
+    while (!finalizar)
     {
         // vaciar cache y tlb
         if (entradas_cache > 0)
@@ -946,48 +961,59 @@ int main(int argc, char *argv[])
         if (entradas_tlb > 0)
             inicializar_tlb(tlb);
         t_list *proceso = recibir_procesos();
-        interrupcion = false;
-        cpuinfo *procesocpu;
-        procesocpu = malloc(sizeof(cpuinfo));
-        procesocpu->tipo = 0; // Para que memoria sepa que le voy a pedir una instruccion
-        procesocpu->pid = *(int *)list_get(proceso, 0);
-        procesocpu->pc = *(int *)list_get(proceso, 1);
-        list_destroy_and_destroy_elements(proceso, free);
-        do
-        {
-            log_info(log_cpu, "---------------");
-            instruccion = obtener_instruccion(procesocpu);
-            if (strcmp(instruccion, "NO"))
+        if(list_is_empty(proceso)){
+            list_destroy(proceso);
+            finalizar = true;
+        } else {
+            interrupcion = false;
+            cpuinfo *procesocpu;
+            procesocpu = malloc(sizeof(cpuinfo));
+            procesocpu->tipo = 0; // Para que memoria sepa que le voy a pedir una instruccion
+            procesocpu->pid = *(int *)list_get(proceso, 0);
+            procesocpu->pc = *(int *)list_get(proceso, 1);
+            list_destroy_and_destroy_elements(proceso, free);
+            do
             {
-                decodear_y_ejecutar_instruccion(instruccion, procesocpu, &interrupcion, cache, tlb);
-                sem_wait(&mutex_interrupcion);
-                interrupcion = check_interrupt(interrupcion);
-                sem_post(&mutex_interrupcion);
-            }
-            else
+                log_info(log_cpu, "---------------");
+                instruccion = obtener_instruccion(procesocpu);
+                if (strcmp(instruccion, "NO"))
+                {
+                    decodear_y_ejecutar_instruccion(instruccion, procesocpu, &interrupcion, cache, tlb);
+                    sem_wait(&mutex_interrupcion);
+                    interrupcion = check_interrupt(interrupcion);
+                    sem_post(&mutex_interrupcion);
+                }
+                else
+                {
+                    abort();
+                }
+
+            } while (!interrupcion);
+
+            if (procesocpu->tipo != 5 && procesocpu->tipo != 2 && procesocpu->tipo != 3)
             {
-                abort();
+                if (se_modifico_cache(cache))
+                {
+                    enviar_cambios_memoria(cache, procesocpu, tlb);
+                }
+                t_paquete *paquete = crear_paquete();
+                int tipo = 4;
+                agregar_a_paquete(paquete, &tipo, sizeof(int));
+                agregar_a_paquete(paquete, &procesocpu->pid, sizeof(int));
+                agregar_a_paquete(paquete, &procesocpu->pc, sizeof(int));
+                enviar_paquete(paquete, conexion_kernel_dispatch);
+                eliminar_paquete(paquete);
             }
 
-        } while (!interrupcion);
-
-        if (procesocpu->tipo != 5 && procesocpu->tipo != 2 && procesocpu->tipo != 3)
-        {
-            if (se_modifico_cache(cache))
-            {
-                enviar_cambios_memoria(cache, procesocpu, tlb);
-            }
-            t_paquete *paquete = crear_paquete();
-            int tipo = 4;
-            agregar_a_paquete(paquete, &tipo, sizeof(int));
-            agregar_a_paquete(paquete, &procesocpu->pid, sizeof(int));
-            agregar_a_paquete(paquete, &procesocpu->pc, sizeof(int));
-            enviar_paquete(paquete, conexion_kernel_dispatch);
-            eliminar_paquete(paquete);
+            free(procesocpu);
         }
-
-        free(procesocpu);
     }
+
+    t_paquete *cerrar_conexion_memoria = crear_paquete();
+    int op = 11;
+    agregar_a_paquete(cerrar_conexion_memoria, &op, sizeof(int));
+    enviar_paquete(cerrar_conexion_memoria, conexion_memoria);
+    eliminar_paquete(cerrar_conexion_memoria);
 
     // Limpieza general
     close(conexion_kernel_dispatch);
