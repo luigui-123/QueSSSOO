@@ -250,13 +250,10 @@ int traducir_direccion(int direccion_logica, cpuinfo *proceso, TLBEntrada *tlb)
         char *numero = recibir_mensaje(conexion_memoria);
         marco = atoi(numero);
         while(marco == -1){
-            log_debug(log_cpu, "MARCO = -1");
             enviar_paquete(paquete, conexion_memoria);
             numero = recibir_mensaje(conexion_memoria);
             marco = atoi(numero);
-            log_debug(log_cpu, "sigo en While");
         }
-        log_debug(log_cpu, "Sali del WHile y el valor del string es %s", numero);
         eliminar_paquete(paquete);
         free(numero);
         log_info(log_cpu, "PID: %d - OBTENER MARCO - Pagina: %d - Marco: %d", proceso->pid, numero_pagina, marco);
@@ -570,7 +567,6 @@ char *obtener_instruccion(cpuinfo *procesocpu)
     enviar_paquete(paquete, conexion_memoria);
     instruccion = recibir_mensaje(conexion_memoria);
     while(!strcmp(instruccion, "-1")){
-        log_debug(log_cpu, "Error al obtener la instruccion");
         enviar_paquete(paquete, conexion_memoria);
         instruccion = recibir_mensaje(conexion_memoria);
     }
@@ -910,7 +906,7 @@ int main(int argc, char *argv[])
     strcat(nombre_log_cpu, argv[1]);
     strcat(nombre_log_cpu, ".log");
 
-    log_cpu = log_create(nombre_log_cpu, "cpu", true, LOG_LEVEL_DEBUG);
+    log_cpu = log_create(nombre_log_cpu, "cpu", true, LOG_LEVEL_INFO);
     free(nombre_log_cpu);
 
     char *path_config = argv[2];
