@@ -11,7 +11,7 @@
 #include <semaphore.h>
 #include <math.h>
 #include <string.h>
-
+//hola
 // variables globales
 int tam_pagina;         // pide a memoria
 int niveles_tabla;      // pide a memoria
